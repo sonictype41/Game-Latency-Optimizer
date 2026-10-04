@@ -40,6 +40,11 @@ namespace {
 constexpr UINT WM_GLO_UPDATE = WM_APP + 1;
 constexpr UINT WM_GLO_DISCONNECT_DONE = WM_APP + 2;
 constexpr UINT WM_GLO_SHUTDOWN_DONE = WM_APP + 3;
+constexpr UINT WM_GLO_TRAY = WM_APP + 4;
+constexpr UINT kTrayIconId = 1;
+constexpr UINT kTrayOpenId = 41001;
+constexpr UINT kTrayDisconnectId = 41002;
+constexpr UINT kTrayQuitId = 41003;
 constexpr int kClientWidth = 620;
 constexpr int kClientHeight = 540;
 constexpr wchar_t kMainWindowClass[] = L"GLOGenericClient";
@@ -80,7 +85,9 @@ struct UiState {
     HICON icon_facebook_light{}, icon_facebook_dark{};
     HICON icon_paste_light{}, icon_paste_dark{}, icon_import_light{}, icon_import_dark{};
     HICON icon_connect_light{}, icon_connect_dark{}, icon_disconnect_light{}, icon_disconnect_dark{};
-    HICON icon_app_big{}, icon_app_small{};
+    HICON icon_app_big{}, icon_app_small{}, icon_tray_connected{};
+    bool tray_added{false};
+    bool tray_connected{false};
     ThemeMode theme{ThemeMode::Light};
     Language language{Language::English};
     UiPage page{UiPage::Main};
@@ -725,9 +732,111 @@ void paint_ui(HWND hwnd,HDC target){
 struct CommandArgs{std::optional<std::filesystem::path> config;std::optional<std::wstring> uri;};
 CommandArgs parse_args(){int argc=0;LPWSTR*argv=CommandLineToArgvW(GetCommandLineW(),&argc);if(!argv)throw std::runtime_error("Cannot read command line");std::vector<std::string>args;for(int i=1;i<argc;++i)args.push_back(narrow(argv[i]));LocalFree(argv);const auto values=glo::cli::parse(args);CommandArgs out;for(const auto&[name,value]:values){if(name=="--config")out.config=std::filesystem::path(widen(value));else if(name=="--uri")out.uri=widen(value);else if(name=="--force-handover-grace-ms")g_ui->options.force_handover_grace_ms=glo::cli::number(value,500,3000);else if(name=="--force-direct")g_ui->options.routing_policy=glo::RoutingPolicy::DirectOnly;else if(name=="--debug")g_ui->debug_logging=true;else if(name=="--dark")g_ui->theme=ThemeMode::Dark;else if(name=="--light")g_ui->theme=ThemeMode::Light;}return out;}
 
-LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){case WM_CREATE:g_ui->window=hwnd;g_ui->font_title=make_font(26,FW_BOLD);g_ui->font_hero=make_font(27,FW_BOLD);g_ui->font_body=make_font(14,FW_NORMAL);g_ui->font_label=make_font(11,FW_BOLD);g_ui->font_metric=make_font(18,FW_BOLD);g_ui->font_link=make_font(14,FW_NORMAL,true);g_ui->icon_app_big=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));g_ui->icon_app_small=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_DEFAULTCOLOR));if(g_ui->icon_app_big)SendMessageW(hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(g_ui->icon_app_big));if(g_ui->icon_app_small)SendMessageW(hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(g_ui->icon_app_small));g_ui->icon_settings_light=load_ui_icon(IDI_GLO_SETTINGS_LIGHT);g_ui->icon_settings_dark=load_ui_icon(IDI_GLO_SETTINGS_DARK);g_ui->icon_sun_light=load_ui_icon(IDI_GLO_SUN_LIGHT);g_ui->icon_sun_dark=load_ui_icon(IDI_GLO_SUN_DARK);g_ui->icon_moon_light=load_ui_icon(IDI_GLO_MOON_LIGHT);g_ui->icon_moon_dark=load_ui_icon(IDI_GLO_MOON_DARK);g_ui->icon_back_light=load_ui_icon(IDI_GLO_BACK_LIGHT);g_ui->icon_back_dark=load_ui_icon(IDI_GLO_BACK_DARK);g_ui->icon_official_light=load_ui_icon(IDI_GLO_OFFICIAL_LIGHT);g_ui->icon_official_dark=load_ui_icon(IDI_GLO_OFFICIAL_DARK);g_ui->icon_github_light=load_ui_icon(IDI_GLO_GITHUB_LIGHT);g_ui->icon_github_dark=load_ui_icon(IDI_GLO_GITHUB_DARK);g_ui->icon_facebook_light=load_ui_icon(IDI_GLO_FACEBOOK_LIGHT);g_ui->icon_facebook_dark=load_ui_icon(IDI_GLO_FACEBOOK_DARK);g_ui->icon_paste_light=load_ui_icon(IDI_GLO_PASTE_LIGHT);g_ui->icon_paste_dark=load_ui_icon(IDI_GLO_PASTE_DARK);g_ui->icon_import_light=load_ui_icon(IDI_GLO_IMPORT_LIGHT);g_ui->icon_import_dark=load_ui_icon(IDI_GLO_IMPORT_DARK);g_ui->icon_connect_light=load_ui_icon(IDI_GLO_CONNECT_LIGHT);g_ui->icon_connect_dark=load_ui_icon(IDI_GLO_CONNECT_DARK);g_ui->icon_disconnect_light=load_ui_icon(IDI_GLO_DISCONNECT_LIGHT);g_ui->icon_disconnect_dark=load_ui_icon(IDI_GLO_DISCONNECT_DARK);SetTimer(hwnd,42,250,nullptr);return 0;
+
+
+bool connection_active() {
+    if(!g_ui) return false;
+    const auto snap=g_ui->client.snapshot();
+    return snap.phase!=glo::UiPhase::Disconnected||snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load();
+}
+
+bool connection_established() {
+    if(!g_ui) return false;
+    const auto snap=g_ui->client.snapshot();
+    return snap.phase!=glo::UiPhase::Disconnected&&snap.state!=glo::ConnectionState::Connecting&&!g_ui->disconnecting.load();
+}
+
+HICON make_connected_tray_icon(HICON base) {
+    if(!base) return nullptr;
+    ICONINFO source{};
+    if(!GetIconInfo(base,&source) || !source.hbmColor || !source.hbmMask) {
+        if(source.hbmColor)DeleteObject(source.hbmColor);
+        if(source.hbmMask)DeleteObject(source.hbmMask);
+        return nullptr;
+    }
+    BITMAP bm{};
+    if(!GetObjectW(source.hbmColor,sizeof(bm),&bm) || bm.bmWidth<=0 || bm.bmHeight<=0) {
+        DeleteObject(source.hbmColor);DeleteObject(source.hbmMask);return nullptr;
+    }
+    HDC screen=GetDC(nullptr),src=CreateCompatibleDC(screen),dst=CreateCompatibleDC(screen),msrc=CreateCompatibleDC(screen),mdst=CreateCompatibleDC(screen);
+    HBITMAP color=CreateCompatibleBitmap(screen,bm.bmWidth,bm.bmHeight);
+    HBITMAP mask=CreateBitmap(bm.bmWidth,bm.bmHeight,1,1,nullptr);
+    HICON result=nullptr;
+    if(src&&dst&&msrc&&mdst&&color&&mask){
+        auto os=SelectObject(src,source.hbmColor),od=SelectObject(dst,color),oms=SelectObject(msrc,source.hbmMask),omd=SelectObject(mdst,mask);
+        BitBlt(dst,0,0,bm.bmWidth,bm.bmHeight,src,0,0,SRCCOPY);
+        BitBlt(mdst,0,0,bm.bmWidth,bm.bmHeight,msrc,0,0,SRCCOPY);
+        const int radius=std::max(2,std::min(bm.bmWidth,bm.bmHeight)/6);
+        const int cx=bm.bmWidth-radius-1,cy=bm.bmHeight-radius-1;
+        HBRUSH green=CreateSolidBrush(RGB(32,201,116));HPEN edge=CreatePen(PS_SOLID,1,RGB(8,80,48));
+        auto ob=SelectObject(dst,green),op=SelectObject(dst,edge);
+        Ellipse(dst,cx-radius,cy-radius,cx+radius+1,cy+radius+1);
+        SelectObject(dst,op);SelectObject(dst,ob);DeleteObject(edge);DeleteObject(green);
+        HBRUSH black=static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));HPEN black_pen=static_cast<HPEN>(GetStockObject(BLACK_PEN));
+        ob=SelectObject(mdst,black);op=SelectObject(mdst,black_pen);
+        Ellipse(mdst,cx-radius,cy-radius,cx+radius+1,cy+radius+1);
+        SelectObject(mdst,op);SelectObject(mdst,ob);
+        SelectObject(src,os);SelectObject(dst,od);SelectObject(msrc,oms);SelectObject(mdst,omd);
+        ICONINFO made{};made.fIcon=TRUE;made.hbmColor=color;made.hbmMask=mask;made.xHotspot=0;made.yHotspot=0;
+        result=CreateIconIndirect(&made);
+    }
+    if(color)DeleteObject(color);if(mask)DeleteObject(mask);
+    if(src)DeleteDC(src);if(dst)DeleteDC(dst);if(msrc)DeleteDC(msrc);if(mdst)DeleteDC(mdst);if(screen)ReleaseDC(nullptr,screen);
+    DeleteObject(source.hbmColor);DeleteObject(source.hbmMask);
+    return result;
+}
+
+void update_tray_icon(bool force=false) {
+    if(!g_ui||!g_ui->window)return;
+    const bool active=connection_established();
+    if(g_ui->tray_added&&!force&&g_ui->tray_connected==active)return;
+    NOTIFYICONDATAW nid{};nid.cbSize=sizeof(nid);nid.hWnd=g_ui->window;nid.uID=kTrayIconId;
+    nid.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP;nid.uCallbackMessage=WM_GLO_TRAY;
+    nid.hIcon=active&&g_ui->icon_tray_connected?g_ui->icon_tray_connected:g_ui->icon_app_small;
+    lstrcpynW(nid.szTip,L"Game Latency Optimizer (GLO)",static_cast<int>(sizeof(nid.szTip)/sizeof(nid.szTip[0])));
+    if(!g_ui->tray_added){
+        if(Shell_NotifyIconW(NIM_ADD,&nid)){g_ui->tray_added=true;g_ui->tray_connected=active;}
+    }else if(Shell_NotifyIconW(NIM_MODIFY,&nid)){g_ui->tray_connected=active;}
+}
+
+void remove_tray_icon(){
+    if(!g_ui||!g_ui->tray_added||!g_ui->window)return;
+    NOTIFYICONDATAW nid{};nid.cbSize=sizeof(nid);nid.hWnd=g_ui->window;nid.uID=kTrayIconId;
+    Shell_NotifyIconW(NIM_DELETE,&nid);g_ui->tray_added=false;
+}
+
+void show_main_window(HWND hwnd){
+    ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);
+}
+
+void begin_quit(HWND hwnd){
+    if(!g_ui||g_ui->closing.load())return;
+    if(connection_active()){
+        const wchar_t* text=g_ui->language==Language::Vietnamese?L"GLO đang kết nối. Thoát ứng dụng sẽ ngắt phiên hiện tại. Bạn có chắc muốn thoát?":L"GLO is currently connected. Quitting will disconnect the active session. Are you sure you want to quit?";
+        const int answer=MessageBoxW(hwnd,text,L"Game Latency Optimizer",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2|MB_TASKMODAL);
+        if(answer!=IDYES)return;
+    }
+    if(g_ui->closing.exchange(true))return;
+    EnableWindow(hwnd,FALSE);ShowWindow(hwnd,SW_HIDE);
+    g_ui->shutdown_thread=std::thread([hwnd]{if(g_ui->disconnect_thread.joinable())g_ui->disconnect_thread.join();g_ui->client.shutdown();PostMessageW(hwnd,WM_GLO_SHUTDOWN_DONE,0,0);});
+}
+
+void show_tray_menu(HWND hwnd){
+    HMENU menu=CreatePopupMenu();if(!menu)return;
+    AppendMenuW(menu,MF_STRING,kTrayOpenId,L"Open Game Latency Optimizer");
+    if(connection_established())AppendMenuW(menu,MF_STRING,kTrayDisconnectId,L"Disconnect");
+    AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING,kTrayQuitId,L"Quit");
+    POINT pt{};GetCursorPos(&pt);SetForegroundWindow(hwnd);
+    const UINT command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON|TPM_NONOTIFY,pt.x,pt.y,0,hwnd,nullptr);
+    DestroyMenu(menu);PostMessageW(hwnd,WM_NULL,0,0);
+    if(command==kTrayOpenId)show_main_window(hwnd);
+    else if(command==kTrayDisconnectId){if(connection_established())begin_disconnect(hwnd);}
+    else if(command==kTrayQuitId)begin_quit(hwnd);
+}
+
+LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){case WM_CREATE:g_ui->window=hwnd;g_ui->font_title=make_font(26,FW_BOLD);g_ui->font_hero=make_font(27,FW_BOLD);g_ui->font_body=make_font(14,FW_NORMAL);g_ui->font_label=make_font(11,FW_BOLD);g_ui->font_metric=make_font(18,FW_BOLD);g_ui->font_link=make_font(14,FW_NORMAL,true);g_ui->icon_app_big=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));g_ui->icon_app_small=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_DEFAULTCOLOR));if(g_ui->icon_app_big)SendMessageW(hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(g_ui->icon_app_big));if(g_ui->icon_app_small)SendMessageW(hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(g_ui->icon_app_small));g_ui->icon_settings_light=load_ui_icon(IDI_GLO_SETTINGS_LIGHT);g_ui->icon_settings_dark=load_ui_icon(IDI_GLO_SETTINGS_DARK);g_ui->icon_sun_light=load_ui_icon(IDI_GLO_SUN_LIGHT);g_ui->icon_sun_dark=load_ui_icon(IDI_GLO_SUN_DARK);g_ui->icon_moon_light=load_ui_icon(IDI_GLO_MOON_LIGHT);g_ui->icon_moon_dark=load_ui_icon(IDI_GLO_MOON_DARK);g_ui->icon_back_light=load_ui_icon(IDI_GLO_BACK_LIGHT);g_ui->icon_back_dark=load_ui_icon(IDI_GLO_BACK_DARK);g_ui->icon_official_light=load_ui_icon(IDI_GLO_OFFICIAL_LIGHT);g_ui->icon_official_dark=load_ui_icon(IDI_GLO_OFFICIAL_DARK);g_ui->icon_github_light=load_ui_icon(IDI_GLO_GITHUB_LIGHT);g_ui->icon_github_dark=load_ui_icon(IDI_GLO_GITHUB_DARK);g_ui->icon_facebook_light=load_ui_icon(IDI_GLO_FACEBOOK_LIGHT);g_ui->icon_facebook_dark=load_ui_icon(IDI_GLO_FACEBOOK_DARK);g_ui->icon_paste_light=load_ui_icon(IDI_GLO_PASTE_LIGHT);g_ui->icon_paste_dark=load_ui_icon(IDI_GLO_PASTE_DARK);g_ui->icon_import_light=load_ui_icon(IDI_GLO_IMPORT_LIGHT);g_ui->icon_import_dark=load_ui_icon(IDI_GLO_IMPORT_DARK);g_ui->icon_connect_light=load_ui_icon(IDI_GLO_CONNECT_LIGHT);g_ui->icon_connect_dark=load_ui_icon(IDI_GLO_CONNECT_DARK);g_ui->icon_disconnect_light=load_ui_icon(IDI_GLO_DISCONNECT_LIGHT);g_ui->icon_disconnect_dark=load_ui_icon(IDI_GLO_DISCONNECT_DARK);g_ui->icon_tray_connected=make_connected_tray_icon(g_ui->icon_app_small);update_tray_icon(true);SetTimer(hwnd,42,250,nullptr);return 0;
     case WM_COPYDATA:{auto*cds=reinterpret_cast<COPYDATASTRUCT*>(lp);if(!cds||cds->dwData!=kHandoffCopyData||!cds->lpData||cds->cbData<sizeof(wchar_t)||cds->cbData>16384)return FALSE;std::wstring uri(static_cast<const wchar_t*>(cds->lpData));ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);handle_handoff_uri(uri);return TRUE;}
-    case WM_TIMER:if(wp==42){const auto snap=g_ui->client.snapshot();bool repaint=snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load();if(g_ui->action_feedback!=ActionFeedback::None){if(GetTickCount64()>=g_ui->action_feedback_until_ms){g_ui->action_feedback=ActionFeedback::None;g_ui->action_feedback_until_ms=0;}repaint=true;}if(repaint)InvalidateRect(hwnd,nullptr,FALSE);return 0;}break;
+    case WM_TIMER:if(wp==42){const auto snap=g_ui->client.snapshot();bool repaint=snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load();if(g_ui->action_feedback!=ActionFeedback::None){if(GetTickCount64()>=g_ui->action_feedback_until_ms){g_ui->action_feedback=ActionFeedback::None;g_ui->action_feedback_until_ms=0;}repaint=true;}if(repaint)InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon();return 0;}break;
     case WM_PAINT:{PAINTSTRUCT ps{};HDC dc=BeginPaint(hwnd,&ps);paint_ui(hwnd,dc);EndPaint(hwnd,&ps);return 0;}case WM_ERASEBKGND:return 1;
     case WM_SETCURSOR:if(LOWORD(lp)==HTCLIENT){POINT pt{};GetCursorPos(&pt);ScreenToClient(hwnd,&pt);if(g_ui->modal!=InAppModal::None){const bool hot=point_in(g_ui->modal_cancel_rect,pt)||point_in(g_ui->modal_primary_rect,pt)||point_in(g_ui->modal_uri_rect,pt)||point_in(g_ui->modal_paste_rect,pt)||point_in(g_ui->modal_import_rect,pt);if(hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}break;}const bool common=point_in(g_ui->official_rect,pt)||point_in(g_ui->github_rect,pt)||point_in(g_ui->facebook_rect,pt)||point_in(g_ui->theme_rect,pt);const bool page_hot=g_ui->page==UiPage::Settings?(point_in(g_ui->back_rect,pt)||point_in(g_ui->language_en_rect,pt)||point_in(g_ui->language_vi_rect,pt)||point_in(g_ui->debug_toggle_rect,pt)||point_in(g_ui->debug_log_link_rect,pt)):(point_in(g_ui->settings_rect,pt)||point_in(g_ui->paste_rect,pt)||point_in(g_ui->import_rect,pt)||point_in(g_ui->connect_rect,pt)||point_in(g_ui->how_to_use_rect,pt)||point_in(g_ui->relay_eye_rect,pt));if(common||page_hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}}break;
     case WM_LBUTTONUP:{
@@ -774,12 +883,16 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){ca
         if(g_ui->modal!=InAppModal::None)return 0;
         if(wp==VK_ESCAPE&&g_ui->page==UiPage::Settings){g_ui->page=UiPage::Main;InvalidateRect(hwnd,nullptr,FALSE);return 0;}
         if(wp==VK_RETURN&&g_ui->page==UiPage::Main){const auto snap=g_ui->client.snapshot();if(snap.phase==glo::UiPhase::Disconnected&&snap.state!=glo::ConnectionState::Connecting)connect_loaded();return 0;}break;
-    case WM_GLO_UPDATE:{const auto s=g_ui->client.snapshot();if(s.session_id!=0&&!g_ui->config_consumed){g_ui->config_consumed=true;g_ui->options.session_grant.clear();if(g_ui->config)g_ui->config->grant.clear();}if(s.phase==glo::UiPhase::Disconnected&&g_ui->config_consumed&&!g_ui->disconnecting.load())clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);UpdateWindow(hwnd);if(s.error&&s.error->generation&&s.error->generation!=g_ui->last_error_generation){g_ui->last_error_generation=s.error->generation;const auto[t,m]=localized_error(*s.error);MessageBoxW(hwnd,m.c_str(),t.c_str(),MB_OK|MB_ICONERROR|MB_TASKMODAL);}return 0;}
-    case WM_GLO_DISCONNECT_DONE:if(g_ui->disconnect_thread.joinable())g_ui->disconnect_thread.join();g_ui->disconnecting=false;if(g_ui->config_consumed)clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);return 0;
+    case WM_GLO_UPDATE:{const auto s=g_ui->client.snapshot();if(s.session_id!=0&&!g_ui->config_consumed){g_ui->config_consumed=true;g_ui->options.session_grant.clear();if(g_ui->config)g_ui->config->grant.clear();}if(s.phase==glo::UiPhase::Disconnected&&g_ui->config_consumed&&!g_ui->disconnecting.load())clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);UpdateWindow(hwnd);update_tray_icon();if(s.error&&s.error->generation&&s.error->generation!=g_ui->last_error_generation){g_ui->last_error_generation=s.error->generation;const auto[t,m]=localized_error(*s.error);MessageBoxW(hwnd,m.c_str(),t.c_str(),MB_OK|MB_ICONERROR|MB_TASKMODAL);}return 0;}
+    case WM_GLO_DISCONNECT_DONE:if(g_ui->disconnect_thread.joinable())g_ui->disconnect_thread.join();g_ui->disconnecting=false;if(g_ui->config_consumed)clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon(true);return 0;
+    case WM_GLO_TRAY:
+        if(lp==WM_LBUTTONUP||lp==WM_LBUTTONDBLCLK){show_main_window(hwnd);return 0;}
+        if(lp==WM_RBUTTONUP||lp==WM_CONTEXTMENU){show_tray_menu(hwnd);return 0;}
+        break;
     case WM_POWERBROADCAST:if(wp==PBT_APMSUSPEND){if(!g_ui->disconnecting.load())begin_disconnect(hwnd);return TRUE;}break;
-    case WM_CLOSE:if(g_ui->closing.exchange(true))return 0;EnableWindow(hwnd,FALSE);ShowWindow(hwnd,SW_HIDE);g_ui->shutdown_thread=std::thread([hwnd]{if(g_ui->disconnect_thread.joinable())g_ui->disconnect_thread.join();g_ui->client.shutdown();PostMessageW(hwnd,WM_GLO_SHUTDOWN_DONE,0,0);});return 0;
+    case WM_CLOSE:ShowWindow(hwnd,SW_HIDE);return 0;
     case WM_GLO_SHUTDOWN_DONE:if(g_ui->shutdown_thread.joinable())g_ui->shutdown_thread.join();DestroyWindow(hwnd);return 0;
-    case WM_DESTROY:for(HFONT f:{g_ui->font_title,g_ui->font_hero,g_ui->font_body,g_ui->font_label,g_ui->font_metric,g_ui->font_link})if(f)DeleteObject(f);for(HICON i:{g_ui->icon_settings_light,g_ui->icon_settings_dark,g_ui->icon_sun_light,g_ui->icon_sun_dark,g_ui->icon_moon_light,g_ui->icon_moon_dark,g_ui->icon_back_light,g_ui->icon_back_dark,g_ui->icon_official_light,g_ui->icon_official_dark,g_ui->icon_github_light,g_ui->icon_github_dark,g_ui->icon_facebook_light,g_ui->icon_facebook_dark,g_ui->icon_paste_light,g_ui->icon_paste_dark,g_ui->icon_import_light,g_ui->icon_import_dark,g_ui->icon_connect_light,g_ui->icon_connect_dark,g_ui->icon_disconnect_light,g_ui->icon_disconnect_dark,g_ui->icon_app_big,g_ui->icon_app_small})if(i)DestroyIcon(i);PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,msg,wp,lp);}
+    case WM_DESTROY:remove_tray_icon();for(HFONT f:{g_ui->font_title,g_ui->font_hero,g_ui->font_body,g_ui->font_label,g_ui->font_metric,g_ui->font_link})if(f)DeleteObject(f);for(HICON i:{g_ui->icon_settings_light,g_ui->icon_settings_dark,g_ui->icon_sun_light,g_ui->icon_sun_dark,g_ui->icon_moon_light,g_ui->icon_moon_dark,g_ui->icon_back_light,g_ui->icon_back_dark,g_ui->icon_official_light,g_ui->icon_official_dark,g_ui->icon_github_light,g_ui->icon_github_dark,g_ui->icon_facebook_light,g_ui->icon_facebook_dark,g_ui->icon_paste_light,g_ui->icon_paste_dark,g_ui->icon_import_light,g_ui->icon_import_dark,g_ui->icon_connect_light,g_ui->icon_connect_dark,g_ui->icon_disconnect_light,g_ui->icon_disconnect_dark,g_ui->icon_app_big,g_ui->icon_app_small,g_ui->icon_tray_connected})if(i)DestroyIcon(i);PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,msg,wp,lp);}
 }
 
 int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR,int show){if(auto worker_exit=glo::run_network_worker_if_requested())return *worker_exit;SetProcessDPIAware();auto ui=std::make_unique<UiState>();g_ui=ui.get();g_ui->theme=system_looks_dark()?ThemeMode::Dark:ThemeMode::Light;load_settings();CommandArgs command;try{command=parse_args();}catch(const std::exception&e){MessageBoxW(nullptr,widen(e.what()).c_str(),L"GLO - Command line",MB_OK|MB_ICONERROR);return 64;}g_ui->options.dbg_log=g_ui->debug_logging;sync_frontend_debug_log(false);g_ui->app_log.info("APP001",std::string("event=start version=")+GLO_VERSION+" process=frontend");

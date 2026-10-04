@@ -4,6 +4,21 @@ All notable public changes to GLO OSS are documented here.
 
 The public release history starts at `v0.0.1-beta`.
 
+## [0.0.2-beta] - 2026-10-04
+
+### Added
+- Windows notification-area integration for the GLO client.
+- A connected-state tray icon that preserves the GLO icon and adds a small green status dot.
+- Tray actions to reopen GLO, disconnect an active session, and quit the client.
+
+### Changed
+- Closing the main window now hides the UI while GLO continues running in the notification area.
+- Exiting GLO is now an explicit Quit action from the tray menu.
+- Quitting while a connection is active now asks for confirmation before ending the session.
+
+### Fixed
+- Closing the main client window no longer terminates an active connection.
+
 ## [0.0.1-beta] - 2026-10-04
 
 ### Added

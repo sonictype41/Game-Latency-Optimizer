@@ -37,7 +37,7 @@ def fetch(info_path: Path = INFO, force: bool = False) -> Path:
 
     req = urllib.request.Request(
         str(meta["upstream"]["url"]),
-        headers={"User-Agent": "GLO-build/0.0.1-beta"},
+        headers={"User-Agent": "GLO-build/0.0.2-beta"},
     )
     with urllib.request.urlopen(req, timeout=60) as response:
         archive = response.read()

@@ -1,4 +1,4 @@
-# Windows installer — GLO v0.0.1-beta
+# Windows installer — GLO v0.0.2-beta
 
 The per-user NSIS installer defaults to `%LOCALAPPDATA%\\GLO`. Setup and uninstall run without elevation. The normal GLO UI remains `asInvoker`; UAC is requested only when the client launches the privileged network worker required for a connection.
 
@@ -14,8 +14,8 @@ The per-user NSIS installer defaults to `%LOCALAPPDATA%\\GLO`. Setup and uninsta
 Version roles:
 
 - `VERSION` = protocol/client compatibility version (`0.0.1`)
-- `RELEASE` = public release version (`0.0.1-beta`)
-- `DISPLAY_VERSION` = user-facing release label (`0.0.1-beta`)
+- `RELEASE` = public release version (`0.0.2-beta`)
+- `DISPLAY_VERSION` = user-facing release label (`0.0.2-beta`)
 
 ## Brand boundary
 
