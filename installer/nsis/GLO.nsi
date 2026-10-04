@@ -433,19 +433,22 @@ Section "GLO Client" SEC_MAIN
   File /oname=WINTUN_LICENSE.txt "${STAGE_DIR}\WINTUN_LICENSE.txt"
   File /oname=LIBSODIUM_LICENSE.txt "${STAGE_DIR}\LIBSODIUM_LICENSE.txt"
   File /oname=SHA256SUMS.txt "${STAGE_DIR}\SHA256SUMS.txt"
+  ; Install an explicit branded icon for Windows shortcuts/shell entries.
+  ; Relying on implicit shortcut icon extraction can fall back to a generic gear icon.
+  File /oname=GLO.ico "${INSTALLER_ICON}"
   WriteUninstaller "$INSTDIR\uninstall0000.exe"
 
   CreateDirectory "$SMPROGRAMS\GLO"
-  CreateShortcut "$SMPROGRAMS\GLO\GLO.lnk" "$INSTDIR\GLO.exe"
+  CreateShortcut "$SMPROGRAMS\GLO\GLO.lnk" "$INSTDIR\GLO.exe" "" "$INSTDIR\GLO.ico" 0
   CreateShortcut "$SMPROGRAMS\GLO\Uninstall GLO.lnk" "$INSTDIR\uninstall0000.exe"
   StrCmp $CreateDesktopShortcut "1" 0 +2
-    CreateShortcut "$DESKTOP\GLO.lnk" "$INSTDIR\GLO.exe"
+    CreateShortcut "$DESKTOP\GLO.lnk" "$INSTDIR\GLO.exe" "" "$INSTDIR\GLO.ico" 0
 
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GLO" "DisplayName" "GLO (Game Latency Optimizer)"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GLO" "DisplayVersion" "${DISPLAY_VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GLO" "Publisher" "GLO"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GLO" "URLInfoAbout" "${OFFICIAL_URL}"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GLO" "DisplayIcon" "$INSTDIR\GLO.exe"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GLO" "DisplayIcon" "$INSTDIR\GLO.ico"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GLO" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GLO" "UninstallString" '"$INSTDIR\uninstall0000.exe"'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GLO" "NoModify" 1
@@ -454,7 +457,7 @@ Section "GLO Client" SEC_MAIN
   DetailPrint "$(ProgressRegistering)"
   WriteRegStr HKCU "Software\Classes\glo" "" "URL:GLO Protocol"
   WriteRegStr HKCU "Software\Classes\glo" "URL Protocol" ""
-  WriteRegStr HKCU "Software\Classes\glo\DefaultIcon" "" "$INSTDIR\GLO.exe,0"
+  WriteRegStr HKCU "Software\Classes\glo\DefaultIcon" "" "$INSTDIR\GLO.ico,0"
   WriteRegStr HKCU "Software\Classes\glo\shell\open\command" "" '"$INSTDIR\GLO.exe" --uri "%1"'
 SectionEnd
 
@@ -478,6 +481,7 @@ Section "Uninstall"
   Delete "$INSTDIR\WINTUN_LICENSE.txt"
   Delete "$INSTDIR\LIBSODIUM_LICENSE.txt"
   Delete "$INSTDIR\SHA256SUMS.txt"
+  Delete "$INSTDIR\GLO.ico"
   Delete "$INSTDIR\uninstall0000.exe"
   ; settings.json and logs are user data and intentionally survive uninstall.
   RMDir "$INSTDIR"

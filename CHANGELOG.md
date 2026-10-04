@@ -15,6 +15,7 @@ The public release history starts at `v0.0.1-beta`.
 - Closing the main window now hides the UI while GLO continues running in the notification area.
 - Exiting GLO is now an explicit Quit action from the tray menu.
 - Quitting while a connection is active now asks for confirmation before ending the session.
+- Windows Start Menu and Desktop shortcuts now use the branded GLO icon explicitly.
 
 ### Fixed
 - Closing the main client window no longer terminates an active connection.

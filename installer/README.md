@@ -8,7 +8,7 @@ The per-user NSIS installer defaults to `%LOCALAPPDATA%\\GLO`. Setup and uninsta
 - The welcome page shows `DISPLAY_VERSION`, the game-routing description and configured official/project links.
 - The exact official website is configured in `installer/BRANDING.json`.
 - The MIT license is shown before installation; third-party notices and bundled dependency licenses are installed with the client.
-- Start Menu shortcuts are created; the Desktop shortcut remains optional.
+- Start Menu shortcuts are created; the Desktop shortcut remains optional. Both use the explicit branded GLO icon.
 - The setup/uninstaller icon is `installer/resources/glo-installer.ico`, generated from the current GLO controller-G brand mark at installer-appropriate icon sizes rather than embedding a full-size source image.
 
 Version roles:

@@ -112,6 +112,14 @@ class WindowsInstallerContractTests(unittest.TestCase):
         self.assertIn('${STAGE_DIR}\\WINTUN_INFO.json', self.nsi)
         self.assertNotIn('third_party\\wintun', self.nsi)
 
+    def test_shortcuts_use_explicit_branded_icon(self):
+        self.assertIn('File /oname=GLO.ico "${INSTALLER_ICON}"', self.nsi)
+        self.assertIn('CreateShortcut "$SMPROGRAMS\\GLO\\GLO.lnk" "$INSTDIR\\GLO.exe" "" "$INSTDIR\\GLO.ico" 0', self.nsi)
+        self.assertIn('CreateShortcut "$DESKTOP\\GLO.lnk" "$INSTDIR\\GLO.exe" "" "$INSTDIR\\GLO.ico" 0', self.nsi)
+        self.assertIn('"DisplayIcon" "$INSTDIR\\GLO.ico"', self.nsi)
+        self.assertIn('"$INSTDIR\\GLO.ico,0"', self.nsi)
+        self.assertIn('Delete "$INSTDIR\\GLO.ico"', self.nsi)
+
     def test_uninstall_preserves_user_settings_and_logs(self):
         self.assertIn('settings.json and logs are user data and intentionally survive uninstall', self.nsi)
         self.assertNotIn('RMDir /r "$INSTDIR"', self.nsi)
