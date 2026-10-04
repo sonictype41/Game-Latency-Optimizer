@@ -766,8 +766,8 @@ HICON make_connected_tray_icon(HICON base) {
         auto os=SelectObject(src,source.hbmColor),od=SelectObject(dst,color),oms=SelectObject(msrc,source.hbmMask),omd=SelectObject(mdst,mask);
         BitBlt(dst,0,0,bm.bmWidth,bm.bmHeight,src,0,0,SRCCOPY);
         BitBlt(mdst,0,0,bm.bmWidth,bm.bmHeight,msrc,0,0,SRCCOPY);
-        const int radius=std::max(2,std::min(bm.bmWidth,bm.bmHeight)/6);
-        const int cx=bm.bmWidth-radius-1,cy=bm.bmHeight-radius-1;
+        const LONG radius=std::max<LONG>(2,std::min(bm.bmWidth,bm.bmHeight)/6);
+        const LONG cx=bm.bmWidth-radius-1,cy=bm.bmHeight-radius-1;
         HBRUSH green=CreateSolidBrush(RGB(32,201,116));HPEN edge=CreatePen(PS_SOLID,1,RGB(8,80,48));
         auto ob=SelectObject(dst,green),op=SelectObject(dst,edge);
         Ellipse(dst,cx-radius,cy-radius,cx+radius+1,cy+radius+1);
