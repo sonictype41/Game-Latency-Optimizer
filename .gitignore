@@ -1,0 +1,11 @@
+/build/
+/bin/
+.pytest_cache/
+**/__pycache__/
+*.py[cod]
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+third_party/wintun/bin/

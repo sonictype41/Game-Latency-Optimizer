@@ -1,0 +1,53 @@
+name: Windows app
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  app:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-python
+            make
+
+      - name: Fetch pinned Wintun
+        run: python ./tools/fetch_wintun.py
+
+      - name: Verify Windows resources
+        run: python ./tools/verify_windows_resources.py
+
+      - name: Run Windows packaging contract tests
+        run: >-
+          python -m unittest
+          tests.test_windows_resource_contract
+          tests.test_windows_installer_contract
+          tests.test_windows_client_contract
+          tests.test_brand_policy
+          tests.test_build_cache_contract
+
+      - name: Build app from local repository inputs
+        run: bash ./tools/build_app.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: glo-app-windows-amd64
+          path: bin/app/

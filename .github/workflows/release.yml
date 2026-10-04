@@ -1,0 +1,271 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: glo-auto-release-main
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.release.outputs.should_release }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: release
+        name: Validate RELEASE and CHANGELOG
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          RELEASE="$(tr -d '\r\n' < RELEASE)"
+          TAG="v${RELEASE}"
+
+          if [[ -z "$VERSION" || -z "$RELEASE" ]]; then
+            echo "VERSION and RELEASE must not be empty." >&2
+            exit 1
+          fi
+
+          case "$RELEASE" in
+            "$VERSION"|"$VERSION"-alpha|"$VERSION"-alpha.*|"$VERSION"-beta|"$VERSION"-beta.*|"$VERSION"-rc|"$VERSION"-rc.*)
+              ;;
+            *)
+              echo "RELEASE ($RELEASE) is not compatible with VERSION ($VERSION)." >&2
+              exit 1
+              ;;
+          esac
+
+          python3 ./tools/extract_release_notes.py "$TAG" --output /tmp/RELEASE_NOTES.md
+          test -s /tmp/RELEASE_NOTES.md
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$RELEASE" >> "$GITHUB_OUTPUT"
+
+
+          if GH_TOKEN="$GITHUB_TOKEN" gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists; no new release is needed."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+            if [[ "$TAG_COMMIT" == "$GITHUB_SHA" ]]; then
+              echo "Tag $TAG already points to this commit; the missing Release will be published."
+            else
+              echo "Orphan tag $TAG points to $TAG_COMMIT while no GitHub Release exists."
+              echo "It will be repaired only after all release builds/tests succeed."
+            fi
+          else
+            echo "Tag $TAG does not exist; GitHub Release creation will create it at $GITHUB_SHA."
+          fi
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Build Windows release
+    needs: validate
+    if: needs.validate.outputs.should_release == 'true'
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-python
+            make
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Fetch pinned Wintun
+        run: python ./tools/fetch_wintun.py
+
+      - name: Verify Windows resources
+        run: python ./tools/verify_windows_resources.py
+
+      - name: Run Windows release tests
+        run: >-
+          python -m unittest
+          tests.test_windows_resource_contract
+          tests.test_windows_installer_contract
+          tests.test_windows_client_contract
+          tests.test_brand_policy
+          tests.test_build_cache_contract
+          tests.test_release_workflow_contract
+
+      - name: Build Windows app
+        run: bash ./tools/build_app.sh
+
+      - name: Stage portable Windows app
+        run: python ./tools/package_windows.py bin/app build/release/windows-portable
+
+      - name: Build Windows installer
+        run: python ./tools/build_installer.py --build-dir bin/app --output-dir bin/installer
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "build/release/windows-portable/*" `
+            -DestinationPath "glo-app-windows-amd64.zip" `
+            -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          if-no-files-found: error
+          path: |
+            glo-app-windows-amd64.zip
+            bin/installer/GLO-Setup-*.exe
+
+  relay:
+    name: Build Linux relay release
+    needs: validate
+    if: needs.validate.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+
+      - name: Run OSS tests
+        run: python3 -m unittest discover -s tests -p 'test*.py'
+
+      - name: Test Go packages
+        env:
+          GOPROXY: "off"
+          GOSUMDB: "off"
+        run: |
+          go test ./...
+          go vet ./...
+
+      - name: Build relay binaries
+        env:
+          GOPROXY: "off"
+          GOSUMDB: "off"
+        run: bash ./tools/build_relay.sh all
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-relay
+          if-no-files-found: error
+          path: |
+            bin/server/glo-relay-linux-amd64
+            bin/server/glo-relay-linux-arm64
+
+  publish:
+    name: Tag and publish GitHub Release
+    needs:
+      - validate
+      - windows
+      - relay
+    if: needs.validate.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.validate.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets and notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          cp artifacts/release-windows/glo-app-windows-amd64.zip dist/
+          find artifacts/release-windows -type f -name 'GLO-Setup-*.exe' -exec cp {} dist/ \;
+          cp artifacts/release-relay/glo-relay-linux-amd64 dist/
+          cp artifacts/release-relay/glo-relay-linux-arm64 dist/
+          chmod +x dist/glo-relay-linux-amd64 dist/glo-relay-linux-arm64
+
+          python3 ./tools/extract_release_notes.py "$TAG" --output RELEASE_NOTES.md
+
+          (
+            cd dist
+            sha256sum glo-app-windows-amd64.zip \
+                      GLO-Setup-*.exe \
+                      glo-relay-linux-amd64 \
+                      glo-relay-linux-arm64 \
+              > SHA256SUMS.txt
+          )
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # If an earlier failed automation left a tag without a Release, repair
+          # that orphan only now, after Windows/Linux builds have succeeded.
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+            if [[ "$TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+              if gh release view "$TAG" >/dev/null 2>&1; then
+                echo "Refusing to move tag $TAG because a GitHub Release already exists." >&2
+                exit 1
+              fi
+              echo "Deleting orphan tag $TAG at $TAG_COMMIT before recreating it at $GITHUB_SHA."
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}"
+            fi
+          fi
+
+          gh release create "$TAG" \
+            dist/* \
+            --target "$GITHUB_SHA" \
+            --title "GLO $RELEASE_VERSION" \
+            --notes-file RELEASE_NOTES.md \
+            --latest
+
+          # A green release job must mean the GitHub Release actually exists.
+          gh release view "$TAG" \
+            --json tagName,name,url,isDraft,isPrerelease \
+            --jq '.tagName + " | " + .name + " | " + .url'

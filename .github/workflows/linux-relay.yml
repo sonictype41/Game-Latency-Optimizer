@@ -1,0 +1,27 @@
+name: Linux relay
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Run OSS contract and brand-policy tests
+        run: python -m unittest discover -s tests -p 'test*.py'
+      - name: Build and test relay (offline inputs)
+        env:
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+        run: bash ./tools/build_relay.sh all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: glo-relay-linux
+          path: bin/server/

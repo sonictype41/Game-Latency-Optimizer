@@ -1,0 +1,258 @@
+{
+  "version": "0.13.0",
+  "edition": "generic",
+  "args": {
+    "key-file": {
+      "enabled": true,
+      "default": "relay.key",
+      "allow_zero": false
+    },
+    "keygen": {
+      "enabled": true,
+      "default": "",
+      "allow_zero": false
+    },
+    "listen": {
+      "enabled": true,
+      "default": ":43170",
+      "allow_zero": false
+    },
+    "pps": {
+      "enabled": true,
+      "default": "0",
+      "allow_zero": true,
+      "min": 1,
+      "max": 1000000
+    },
+    "hello-retry-global-pps": {
+      "enabled": true,
+      "default": "1000",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "hello-verify-global-pps": {
+      "enabled": true,
+      "default": "100",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "hello-verify-per-ip-pps": {
+      "enabled": true,
+      "default": "20",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "hello-inflight-global": {
+      "enabled": true,
+      "default": "256",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "hello-inflight-per-ip": {
+      "enabled": true,
+      "default": "32",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "hello-workers": {
+      "enabled": true,
+      "default": "4",
+      "allow_zero": false,
+      "min": 1,
+      "max": 256
+    },
+    "hello-queue": {
+      "enabled": true,
+      "default": "256",
+      "allow_zero": false,
+      "min": 1,
+      "max": 65536
+    },
+    "alloc-global-pps": {
+      "enabled": true,
+      "default": "100",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "alloc-per-ip-pps": {
+      "enabled": true,
+      "default": "20",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "session-pps": {
+      "enabled": true,
+      "default": "5000",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "session-kbps": {
+      "enabled": true,
+      "default": "20000",
+      "allow_zero": false,
+      "min": 1,
+      "max": 10000000
+    },
+    "session-burst-ms": {
+      "enabled": true,
+      "default": "250",
+      "allow_zero": true,
+      "min": 1,
+      "max": 10000
+    },
+    "max-sessions": {
+      "enabled": true,
+      "default": "200",
+      "allow_zero": false,
+      "min": 1,
+      "max": 100000
+    },
+    "max-control-sessions": {
+      "enabled": true,
+      "default": "4096",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "max-control-sessions-per-ip": {
+      "enabled": true,
+      "default": "512",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "max-flows-per-session": {
+      "enabled": true,
+      "default": "8",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1024
+    },
+    "flow-timeout-sec": {
+      "enabled": true,
+      "default": "15",
+      "allow_zero": false,
+      "min": 1,
+      "max": 3600
+    },
+    "session-idle-timeout-sec": {
+      "enabled": true,
+      "default": "25",
+      "allow_zero": true,
+      "min": 10,
+      "max": 3600
+    },
+    "flow-open-global-pps": {
+      "enabled": true,
+      "default": "2000",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "flow-open-per-ip-pps": {
+      "enabled": true,
+      "default": "500",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "flow-open-per-session-pps": {
+      "enabled": true,
+      "default": "50",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1000000
+    },
+    "maintenance": {
+      "enabled": true,
+      "default": "false",
+      "allow_zero": false
+    },
+    "egress-burst-ms": {
+      "enabled": true,
+      "default": "250",
+      "allow_zero": true,
+      "min": 1,
+      "max": 10000
+    },
+    "egress-queue-ms": {
+      "enabled": true,
+      "default": "40",
+      "allow_zero": true,
+      "min": 1,
+      "max": 1000
+    },
+    "egress-global-queue-bytes": {
+      "enabled": true,
+      "default": "67108864",
+      "allow_zero": false,
+      "min": 1,
+      "max": 1073741824
+    },
+    "stats-interval-sec": {
+      "enabled": true,
+      "default": "15",
+      "allow_zero": false,
+      "min": 1,
+      "max": 3600
+    },
+    "allow-private-targets": {
+      "enabled": true,
+      "default": "false",
+      "allow_zero": false
+    },
+    "debug": {
+      "enabled": true,
+      "default": "false",
+      "allow_zero": false
+    },
+    "clear-default-allowlist": {
+      "enabled": true,
+      "default": "false",
+      "allow_zero": false
+    },
+    "allow-cidr-file": {
+      "enabled": true,
+      "default": "",
+      "allow_zero": false
+    },
+    "allow-cidr": {
+      "enabled": true,
+      "default": "",
+      "allow_zero": false
+    },
+    "event-socket": {
+      "enabled": true,
+      "default": "",
+      "allow_zero": false
+    },
+    "issuer-key-file": {
+      "enabled": true,
+      "default": "issuer.pub",
+      "allow_zero": false
+    },
+    "redeemed-ticket-journal": {
+      "enabled": true,
+      "default": "redeemed-tickets.log",
+      "allow_zero": false
+    },
+    "maintenance-file": {
+      "enabled": true,
+      "default": "",
+      "allow_zero": false
+    },
+    "event-journal": {
+      "enabled": true,
+      "default": "",
+      "allow_zero": false
+    }
+  }
+}

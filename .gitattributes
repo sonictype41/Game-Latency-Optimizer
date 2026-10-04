@@ -1,0 +1,9 @@
+# GitHub Linguist: report first-party GLO code, not vendored dependencies/docs.
+vendor/** linguist-vendored
+third_party/** linguist-vendored
+docs/** linguist-documentation
+*.md linguist-documentation
+*.png linguist-generated
+*.jpg linguist-generated
+*.jpeg linguist-generated
+*.ico linguist-generated
