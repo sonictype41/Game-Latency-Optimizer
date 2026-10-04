@@ -60,17 +60,28 @@ jobs:
           echo "version=$RELEASE" >> "$GITHUB_OUTPUT"
 
 
+          RELEASE_EXISTS=false
           if GH_TOKEN="$GITHUB_TOKEN" gh release view "$TAG" >/dev/null 2>&1; then
-            echo "GitHub Release $TAG already exists; no new release is needed."
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            RELEASE_EXISTS=true
+            if [[ "$RELEASE" == "$VERSION" ]]; then
+              echo "Stable GitHub Release $TAG already exists; stable releases are immutable."
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Existing prerelease $TAG will be rebuilt and its assets replaced from $GITHUB_SHA."
           fi
 
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
             TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
             if [[ "$TAG_COMMIT" == "$GITHUB_SHA" ]]; then
-              echo "Tag $TAG already points to this commit; the missing Release will be published."
+              if [[ "$RELEASE_EXISTS" == "true" ]]; then
+                echo "Tag $TAG already points to this commit; prerelease assets will be refreshed."
+              else
+                echo "Tag $TAG already points to this commit; the missing Release will be published."
+              fi
+            elif [[ "$RELEASE_EXISTS" == "true" ]]; then
+              echo "Prerelease tag $TAG currently points to $TAG_COMMIT and will be moved to $GITHUB_SHA only after all builds/tests succeed."
             else
               echo "Orphan tag $TAG points to $TAG_COMMIT while no GitHub Release exists."
               echo "It will be repaired only after all release builds/tests succeed."
@@ -243,27 +254,43 @@ jobs:
         run: |
           set -euo pipefail
 
-          # If an earlier failed automation left a tag without a Release, repair
-          # that orphan only now, after Windows/Linux builds have succeeded.
+          RELEASE_EXISTS=false
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            RELEASE_EXISTS=true
+          fi
+
+          # Update a mutable prerelease tag only now, after every release build/test
+          # has succeeded. Stable releases never reach this path once published.
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
             TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
             if [[ "$TAG_COMMIT" != "$GITHUB_SHA" ]]; then
-              if gh release view "$TAG" >/dev/null 2>&1; then
-                echo "Refusing to move tag $TAG because a GitHub Release already exists." >&2
-                exit 1
+              if [[ "$RELEASE_EXISTS" == "true" ]]; then
+                echo "Moving mutable prerelease tag $TAG from $TAG_COMMIT to $GITHUB_SHA."
+                gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+                  -f sha="$GITHUB_SHA" -F force=true >/dev/null
+              else
+                echo "Deleting orphan tag $TAG at $TAG_COMMIT before recreating it at $GITHUB_SHA."
+                gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}"
               fi
-              echo "Deleting orphan tag $TAG at $TAG_COMMIT before recreating it at $GITHUB_SHA."
-              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}"
             fi
           fi
 
-          gh release create "$TAG" \
-            dist/* \
-            --target "$GITHUB_SHA" \
-            --title "GLO $RELEASE_VERSION" \
-            --notes-file RELEASE_NOTES.md \
-            --latest
+          if [[ "$RELEASE_EXISTS" == "true" ]]; then
+            echo "Refreshing existing prerelease $TAG and replacing release assets."
+            gh release edit "$TAG" \
+              --title "GLO $RELEASE_VERSION" \
+              --notes-file RELEASE_NOTES.md \
+              --latest
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" \
+              dist/* \
+              --target "$GITHUB_SHA" \
+              --title "GLO $RELEASE_VERSION" \
+              --notes-file RELEASE_NOTES.md \
+              --latest
+          fi
 
           # A green release job must mean the GitHub Release actually exists.
           gh release view "$TAG" \

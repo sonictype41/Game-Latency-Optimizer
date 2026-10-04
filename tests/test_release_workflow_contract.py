@@ -43,6 +43,11 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
             'tools/extract_release_notes.py',
             'SHA256SUMS.txt',
             'gh release create',
+            'Existing prerelease $TAG will be rebuilt and its assets replaced',
+            'Moving mutable prerelease tag $TAG',
+            'gh release edit "$TAG"',
+            'gh release upload "$TAG" dist/* --clobber',
+            '-F force=true',
             '--notes-file RELEASE_NOTES.md',
             '--latest',
             'gh release view "$TAG"',
@@ -54,6 +59,8 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("Publish prerelease", workflow)
         self.assertNotIn("Publish stable release", workflow)
         self.assertNotIn("PRERELEASE", workflow)
+        self.assertIn('Stable GitHub Release $TAG already exists; stable releases are immutable.', workflow)
+        self.assertNotIn('GitHub Release $TAG already exists; no new release is needed.', workflow)
 
 
     def test_public_build_and_release_files_have_no_machine_specific_paths(self):
