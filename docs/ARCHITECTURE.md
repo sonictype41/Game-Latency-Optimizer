@@ -3,23 +3,20 @@
 GLO OSS is the generic client/relay protocol implementation. The official service is outside this repository.
 
 ```text
-compatible service / provider
-          |
-          | glo:// short-lived handoff
-          v
-    generic Windows client
-          |
-          | inspect candidate relays
-          | client-side relay RTT probes
-          | redeem with measured RTT/null values
-          v
- service/provider returns strict session config
-          |
-          v
- generic Windows client <==== secure GLO control ====> generic Linux relay
-          |                                                |
-          +---- selected gameplay traffic -----------------+
+Provider web / compatible service           Independent self-host issuer
+             |                                        |
+       glo:// handoff                       signed JSON session config
+             |                                        |
+         Windows client  <----------------------------+
+             | inspect / probe / redeem (URI only)
+             v
+    strict session config validation
+             |
+        secure GLO client <==== transport/admission ====> generic Linux relay
+             |                                                |
+             +------------- supported gameplay UDP ------------+
 ```
+
 
 ## Service boundary
 

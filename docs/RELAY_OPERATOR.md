@@ -10,6 +10,10 @@ The OSS relay is a generic Linux dataplane. The official service is outside this
 
 Artifacts are written under `bin/server/`.
 
+## End-to-end deployment
+
+For a complete walk-through from a clean VPS through an independently issued JSON config, use [SELF_HOSTING.md](SELF_HOSTING.md). It covers relay X25519 keys, issuer Ed25519 keys, ingress firewall, CLI issuance, redemption and Windows import. For the exact schema read [SESSION_CONFIG.md](SESSION_CONFIG.md); for traffic stages and log codes use [DIAGNOSTICS.md](DIAGNOSTICS.md).
+
 ## Keys and issuer trust
 
 A relay needs its relay identity key and one or more trusted issuer public keys according to the relay's command-line contract. Private issuer keys belong to the provider/issuer and must not be copied to relay clients or session configs.

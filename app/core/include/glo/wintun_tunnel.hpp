@@ -34,6 +34,13 @@ struct WintunEvent {
     std::uint8_t ip_protocol{0};
 };
 
+// Aggregated for the currently installed exact /32 route; no payloads or tokens.
+struct WintunRouteDiagnostics {
+    std::uint64_t epoch{0}, rx_total{0}, rx_game_host{0}, rx_game_udp{0};
+    std::uint64_t forwarded{0}, send_failed{0}, bad_ip{0}, other_host{0};
+    std::uint64_t non_udp{0}, wrong_port{0}, stale_epoch{0}, malformed_udp{0}, oversize{0};
+};
+
 class WintunTunnel {
 public:
     using SendControlFn = std::function<bool(const protocol::Packet&)>;
@@ -61,6 +68,9 @@ public:
     // removed because the preflight route worker is the only routing authority.
     bool set_endpoint(const PreflightEndpoint& endpoint, std::string& error);
     void clear_routes();
+    // Diagnostic counters are active only for the verification window.
+    void set_diagnostics_enabled(bool enabled) noexcept;
+    WintunRouteDiagnostics route_diagnostics() const noexcept;
 
     void stop();
     bool running() const noexcept { return running_.load(); }

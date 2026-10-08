@@ -47,12 +47,12 @@ class WindowsInstallerContractTests(unittest.TestCase):
         self.assertIn('MUI_ICON "${INSTALLER_ICON}"', self.nsi)
         self.assertIn('MUI_UNICON "${INSTALLER_ICON}"', self.nsi)
 
-    def test_links_are_configured_without_inventing_unpublished_social_urls(self):
+    def test_links_are_configured_with_confirmed_facebook_url(self):
         branding = json.loads((ROOT / 'installer/BRANDING.json').read_text(encoding='utf-8'))
         self.assertEqual(1, branding['schema'])
         self.assertEqual('https://gloptimizer.com', branding['official_url'])
         self.assertTrue(branding['github_url'].startswith('https://github.com/'))
-        self.assertEqual('', branding['facebook_url'])
+        self.assertEqual('https://www.facebook.com/an.nguyen.671146/', branding['facebook_url'])
         self.assertIn('HAS_GITHUB', self.nsi)
         self.assertIn('HAS_FACEBOOK', self.nsi)
         self.assertIn('LangString LinksLabel', self.nsi)
@@ -62,7 +62,7 @@ class WindowsInstallerContractTests(unittest.TestCase):
         release=(ROOT/'RELEASE').read_text(encoding='utf-8').strip()
         display=(ROOT/'DISPLAY_VERSION').read_text(encoding='utf-8').strip()
         self.assertRegex(version, r'^[0-9]+\.[0-9]+\.[0-9]+$')
-        self.assertRegex(release, rf'^{re.escape(version)}(?:-(?:r[1-9][0-9]*|alpha(?:\.[1-9][0-9]*)?|beta(?:\.[1-9][0-9]*)?))?$')
+        self.assertRegex(release, rf'^{re.escape(version)}(?:-(?:r[1-9][0-9]*|alpha(?:\.[1-9][0-9]*)?|beta(?:(?:\.[1-9][0-9]*)|(?:-r[1-9][0-9]*))?))?$')
         self.assertTrue(display==release or re.fullmatch(rf'{re.escape(version)}-[0-9]{{8}}',display))
         self.assertIn('DisplayVersion" "${DISPLAY_VERSION}"', self.nsi)
         ui=(ROOT/'app/frontend/main.cpp').read_text(encoding='utf-8')

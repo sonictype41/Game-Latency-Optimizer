@@ -48,13 +48,23 @@ bool packet_send(SOCKET sock, const protocol::Packet& p, std::mutex& send_mu, se
 
 bool data_send(SOCKET sock, std::uint64_t session_id, std::uint32_t flow_id, std::uint64_t sequence,
                std::uint32_t remote_ipv4_host, std::uint16_t remote_port, std::uint16_t local_port,
-               std::span<const std::uint8_t> payload, std::mutex& send_mu) {
+               std::span<const std::uint8_t> payload, std::mutex& send_mu,
+               int* failure_kind = nullptr, int* socket_error = nullptr) {
+    if (failure_kind) *failure_kind = 0;
+    if (socket_error) *socket_error = 0;
     std::array<std::uint8_t, protocol::kDataMaxDatagram> bytes;
     std::size_t written = 0;
     if (!protocol::encode_data_c2s(session_id, sequence, flow_id, remote_ipv4_host, remote_port, local_port,
-                                   payload, bytes, written)) return false;
+                                   payload, bytes, written)) {
+        if (failure_kind) *failure_kind = 1;  // local serialization
+        return false;
+    }
     std::scoped_lock lock(send_mu);
-    return send(sock,reinterpret_cast<const char*>(bytes.data()),static_cast<int>(written),0)==static_cast<int>(written);
+    const int n = send(sock,reinterpret_cast<const char*>(bytes.data()),static_cast<int>(written),0);
+    if (n == static_cast<int>(written)) return true;
+    if (failure_kind) *failure_kind = 2;  // socket failure/short send
+    if (socket_error && n == SOCKET_ERROR) *socket_error = WSAGetLastError();
+    return false;
 }
 
 enum class RxKind { None, Control, Data };
@@ -492,12 +502,24 @@ void ClientCore::worker(ClientOptions options) {
         route_events.push(std::move(event));
     };
 
+    std::atomic<std::uint64_t> net_send_ok{0}, net_encode_fail{0}, net_socket_fail{0};
+    std::atomic<int> net_last_wsa_error{0};
+    std::atomic_bool verification_diagnostics{false};
     std::string tunnel_error;
     if (!tunnel.arm(options.wintun_path, sid,
                     [&](const protocol::Packet& p) { return send_packet(p); },
                     [&](std::uint32_t flow_id, std::uint64_t sequence, std::uint32_t remote_ipv4_host,
                         std::uint16_t remote_port, std::uint16_t local_port, std::span<const std::uint8_t> payload) {
-                        return data_send(sock, sid, flow_id, sequence, remote_ipv4_host, remote_port, local_port, payload, send_mu);
+                        int failure = 0, winsock = 0;
+                        const bool ok = data_send(sock, sid, flow_id, sequence, remote_ipv4_host,
+                                                  remote_port, local_port, payload, send_mu, &failure, &winsock);
+                        if (verification_diagnostics.load(std::memory_order_relaxed)) {
+                            if (ok) net_send_ok.fetch_add(1, std::memory_order_relaxed);
+                            else if (failure == 1) net_encode_fail.fetch_add(1, std::memory_order_relaxed);
+                            else { net_socket_fail.fetch_add(1, std::memory_order_relaxed);
+                                   if (winsock) net_last_wsa_error.store(winsock, std::memory_order_relaxed); }
+                        }
+                        return ok;
                     },
                     tunnel_event, tunnel_error)) {
         log.error("WINTUN001", "event=init_failed reason=" + tunnel_error);
@@ -540,6 +562,13 @@ void ClientCore::worker(ClientOptions options) {
         std::optional<PreflightEndpoint> selected;
         ForwardedFlowSet forwarded;
         std::optional<Clock::time_point> verify_deadline;
+        bool route_diagnostics_armed = false; // only route thread changes this flag
+
+        auto stop_route_diagnostics = [&] {
+            verification_diagnostics.store(false, std::memory_order_release);
+            tunnel.set_diagnostics_enabled(false);
+            route_diagnostics_armed = false;
+        };
 
         auto disarm_gate = [&] {
             endpoint_gate->disarm();
@@ -598,6 +627,41 @@ void ClientCore::worker(ClientOptions options) {
 
         auto fail_open = [&](const std::string& code, const std::string& reason,
                              DirectReason direct_reason, bool degraded) {
+            if (code == "ROUTE016") {
+                if (log.enabled()) {
+                    // Snapshot and associated warnings share one 2-second gate,
+                    // rather than allowing three unlimited records per timeout.
+                    const auto d = route_diagnostics_armed ? tunnel.route_diagnostics() : WintunRouteDiagnostics{};
+                    const std::string stage = !route_diagnostics_armed || d.epoch == 0 ? "diagnostic_unavailable" :
+                        d.rx_total == 0 ? "no_wintun_packet" :
+                        d.rx_game_host == 0 ? "no_packet_for_routed_host" :
+                        d.rx_game_udp == 0 ? "packet_filtered_or_malformed" :
+                        (d.send_failed > 0 && d.forwarded == 0) ? "gameplay_send_failed" :
+                        (d.forwarded > 0 ? "awaiting_matching_reply" : "no_forwarded_gameplay");
+                    if (log.warn("ROUTE016", "event=fail_open reason=relay_verification_timeout stage=" + stage +
+                        " epoch=" + std::to_string(d.epoch) + " verify_ms=" +
+                        std::to_string(options.force_handover_grace_ms), std::chrono::seconds(2)) && route_diagnostics_armed) {
+                        log.info("WINTUN007", "event=verification_snapshot epoch=" + std::to_string(d.epoch) +
+                            " rx_total=" + std::to_string(d.rx_total) +
+                            " rx_game_host=" + std::to_string(d.rx_game_host) +
+                            " rx_game_udp=" + std::to_string(d.rx_game_udp) +
+                            " forwarded=" + std::to_string(d.forwarded) +
+                            " send_failed=" + std::to_string(d.send_failed) +
+                            " bad_ip=" + std::to_string(d.bad_ip) +
+                            " other_host=" + std::to_string(d.other_host) +
+                            " non_udp=" + std::to_string(d.non_udp) +
+                            " wrong_port=" + std::to_string(d.wrong_port) +
+                            " stale_epoch=" + std::to_string(d.stale_epoch) +
+                            " malformed_udp=" + std::to_string(d.malformed_udp) +
+                            " oversize=" + std::to_string(d.oversize));
+                        log.info("NET006", "event=gameplay_send_snapshot send_ok=" + std::to_string(net_send_ok.load()) +
+                            " encode_failed=" + std::to_string(net_encode_fail.load()) +
+                            " socket_failed=" + std::to_string(net_socket_fail.load()) +
+                            " last_wsa_error=" + std::to_string(net_last_wsa_error.load()));
+                    }
+                }
+            }
+            stop_route_diagnostics();
             disarm_gate();
             tunnel.clear_routes();
             routed_gameplay_host.store(0, std::memory_order_release);
@@ -608,7 +672,8 @@ void ClientCore::worker(ClientOptions options) {
             route_state.store(model.state(), std::memory_order_release);
             set_route_ui(ActiveRoute::Direct);
             set_direct_reason(direct_reason);
-            log.warn(code, "event=fail_open reason=" + reason, std::chrono::seconds(2));
+            if (code != "ROUTE016")
+                log.warn(code, "event=fail_open reason=" + reason, std::chrono::seconds(2));
             publish(degraded ? ConnectionState::Degraded : ConnectionState::Direct, "In game - Direct");
         };
 
@@ -618,12 +683,18 @@ void ClientCore::worker(ClientOptions options) {
                 return false;
             }
             selected = ep;
+            stop_route_diagnostics();
+            net_send_ok=0; net_encode_fail=0; net_socket_fail=0; net_last_wsa_error=0;
+            route_diagnostics_armed = log.enabled();
+            tunnel.set_diagnostics_enabled(route_diagnostics_armed);
+            verification_diagnostics.store(route_diagnostics_armed, std::memory_order_release);
             const PreflightEndpoint game_ep = ep;
             std::string route_error;
             const bool route_ok = tunnel.running() && tunnel.set_endpoint(game_ep, route_error);
             // The exact route must exist before releasing the blocked first flow.
             disarm_gate();
             if (!route_ok || !model.verifying(generation)) {
+                stop_route_diagnostics();
                 tunnel.clear_routes();
                 routed_gameplay_host.store(0, std::memory_order_release);
                 model.lock_direct(generation);
@@ -646,6 +717,7 @@ void ClientCore::worker(ClientOptions options) {
         auto lock_relay = [&](const RouteFlowIdentity& reverse) {
             if (model.state() != RouteControlState::RelayVerifying || !forwarded.matches(reverse)) return;
             if (!model.lock_relay(generation)) return;
+            stop_route_diagnostics();
             route_state.store(model.state(), std::memory_order_release);
             verify_deadline.reset();
             set_route_ui(ActiveRoute::Relay);
@@ -664,6 +736,7 @@ void ClientCore::worker(ClientOptions options) {
         };
 
         auto reset_cycle = [&](const RouteEvent& ev) {
+            stop_route_diagnostics();
             disarm_gate();
             tunnel.clear_routes();
             routed_gameplay_host.store(0, std::memory_order_release);
@@ -784,6 +857,7 @@ void ClientCore::worker(ClientOptions options) {
                     break;
             }
         }
+        stop_route_diagnostics();
         endpoint_gate->disarm();
     });
 

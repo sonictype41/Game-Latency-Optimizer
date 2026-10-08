@@ -55,10 +55,10 @@ constexpr wchar_t kOfficialWebUrl[] = L"https://gloptimizer.com";
 constexpr wchar_t kOfficialApiOrigin[] = L"https://api.gloptimizer.com";
 constexpr wchar_t kSingleInstanceMutex[] = L"Local\\GLOClientSingleInstance";
 constexpr ULONG_PTR kHandoffCopyData = 0x474C4F55;
-constexpr wchar_t kHowToUseUrl[] = L"https://gloptimizer.com/how-to-use.html";
+constexpr wchar_t kHowToUseUrl[] = L"https://gloptimizer.com/auth/";
 // Set these to the project's exact public links when they are published.
 constexpr wchar_t kGithubUrl[] = L"https://github.com/sonictype41/Game-Latency-Optimizer";
-constexpr wchar_t kFacebookUrl[] = L"";
+constexpr wchar_t kFacebookUrl[] = L"https://www.facebook.com/an.nguyen.671146/";
 
 enum class ThemeMode { Light, Dark };
 enum class Language { English, Vietnamese };
@@ -291,20 +291,19 @@ void draw_idle_help(HDC dc,RECT rect,const Palette&p){
     const wchar_t* body=g_ui->language==Language::Vietnamese
         ?L"Mở liên kết GLO từ dịch vụ của bạn, hoặc dùng kết nối self-hosted bên thứ ba."
         :L"Open a GLO link from your service, or use a self-hosted third-party connection.";
-    const wchar_t* link=g_ui->language==Language::Vietnamese?L"Cách sử dụng":L"How to use";
+    const wchar_t* link=g_ui->language==Language::Vietnamese?L"Sử dụng dịch vụ chính thức của GLO":L"Use the official GLO service";
     select_font(dc,g_ui->font_body,p.muted);
     SIZE bs{},ls{};
     GetTextExtentPoint32W(dc,body,static_cast<int>(wcslen(body)),&bs);
     select_font(dc,g_ui->font_link,p.accent);
     GetTextExtentPoint32W(dc,link,static_cast<int>(wcslen(link)),&ls);
-    const int gap=8;
-    const bool same_line=bs.cx+gap+ls.cx<=rect.right-rect.left;
-    RECT body_rect{rect.left,rect.top,rect.right,same_line?rect.bottom:rect.top+22};
+    // The official-service action is intentionally a dedicated line. It must
+    // remain clickable and readable when the UI is resized or localized.
+    RECT body_rect{rect.left,rect.top,rect.right,rect.top+21};
     draw_text(dc,body,body_rect,DT_LEFT|DT_TOP|DT_SINGLELINE|DT_END_ELLIPSIS,g_ui->font_body,p.muted);
-    const int link_x=same_line?rect.left+bs.cx+gap:rect.left;
-    const int link_y=same_line?rect.top:rect.top+22;
-    g_ui->how_to_use_rect=RECT{link_x,link_y,link_x+ls.cx+2,link_y+22};
-    draw_text(dc,link,g_ui->how_to_use_rect,DT_LEFT|DT_TOP|DT_SINGLELINE,g_ui->font_link,p.accent);
+    const int link_y=rect.top+21;
+    g_ui->how_to_use_rect=RECT{rect.left,link_y,rect.right,link_y+22};
+    draw_text(dc,link,g_ui->how_to_use_rect,DT_LEFT|DT_TOP|DT_SINGLELINE|DT_END_ELLIPSIS,g_ui->font_link,p.accent);
 }
 
 std::wstring ping_value(const glo::ClientSnapshot&s){if(s.phase==glo::UiPhase::Gameplay&&s.active_route==glo::ActiveRoute::Direct)return L"N/A";if(!s.gameplay_ping_ms||!std::isfinite(*s.gameplay_ping_ms)||*s.gameplay_ping_ms<=0)return L"--";return std::to_wstring(std::lround(std::clamp(*s.gameplay_ping_ms,0.0,9999.0)))+L" ms";}
@@ -633,7 +632,7 @@ void paint_settings(HDC dc,const RECT&client,const Palette&p){
     RECT dbg_title{48,297,w-48,321};draw_text(dc,g_ui->language==Language::Vietnamese?L"CHẨN ĐOÁN":L"DIAGNOSTICS",dbg_title,DT_LEFT|DT_VCENTER|DT_SINGLELINE,g_ui->font_label,p.accent);
     RECT dbg{48,328,w-132,356};draw_text(dc,g_ui->language==Language::Vietnamese?L"Nhật ký gỡ lỗi chi tiết":L"Detailed debug logging",dbg,DT_LEFT|DT_VCENTER|DT_SINGLELINE,g_ui->font_body,p.text);
     g_ui->debug_toggle_rect=RECT{w-112,326,w-50,358};draw_toggle(dc,g_ui->debug_toggle_rect,g_ui->debug_logging,p);
-    RECT hint{48,364,w-48,394};draw_text(dc,g_ui->language==Language::Vietnamese?L"Ghi DEBUG frontend + network vào LocalAppData\\GLO\\logs\\dbg_log.txt, nối tiếp và flush ngay.":L"Appends frontend + network DEBUG to LocalAppData\\GLO\\logs\\dbg_log.txt and flushes each line immediately.",hint,DT_LEFT|DT_TOP|DT_WORDBREAK,g_ui->font_label,p.muted);
+    RECT hint{48,364,w-48,394};draw_text(dc,g_ui->language==Language::Vietnamese?L"Log trong LocalAppData\\GLO\\logs, tối đa 3 tệp x 5 MiB.":L"Logs in LocalAppData\\GLO\\logs, up to 3 files x 5 MiB.",hint,DT_LEFT|DT_TOP|DT_WORDBREAK,g_ui->font_label,p.muted);
     if(g_ui->debug_logging){g_ui->debug_log_link_rect=RECT{48,398,210,423};draw_text(dc,g_ui->language==Language::Vietnamese?L"Mở tệp nhật ký":L"Open log file",g_ui->debug_log_link_rect,DT_LEFT|DT_VCENTER|DT_SINGLELINE,g_ui->font_link,p.accent);}
 
     draw_footer(dc,client,p);
@@ -871,7 +870,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){ca
         }
         if(point_in(g_ui->settings_rect,lp)){g_ui->page=UiPage::Settings;InvalidateRect(hwnd,nullptr,FALSE);return 0;}
         if(point_in(g_ui->theme_rect,lp)){g_ui->theme=g_ui->theme==ThemeMode::Dark?ThemeMode::Light:ThemeMode::Dark;persist_settings(hwnd,ot,ol,od);InvalidateRect(hwnd,nullptr,FALSE);return 0;}
-        if(point_in(g_ui->how_to_use_rect,lp)){open_external_link(hwnd,kHowToUseUrl,g_ui->language==Language::Vietnamese?L"Cách sử dụng":L"How to use");return 0;}
+        if(point_in(g_ui->how_to_use_rect,lp)){open_external_link(hwnd,kHowToUseUrl,g_ui->language==Language::Vietnamese?L"Sử dụng dịch vụ chính thức của GLO":L"Use the official GLO service");return 0;}
         if(point_in(g_ui->relay_eye_rect,lp)){g_ui->relay_endpoint_visible=!g_ui->relay_endpoint_visible;InvalidateRect(hwnd,nullptr,FALSE);return 0;}
         const auto snap=g_ui->client.snapshot();const bool active=snap.phase!=glo::UiPhase::Disconnected||snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load();
         if(!active&&point_in(g_ui->paste_rect,lp)){self_host_menu();return 0;}

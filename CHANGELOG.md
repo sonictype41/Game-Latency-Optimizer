@@ -4,6 +4,23 @@ All notable public changes to GLO OSS are documented here.
 
 The public release history starts at `v0.0.1-beta`.
 
+## [0.0.2-beta-r1] - 2026-10-08
+
+### Added
+- Verification-only `WINTUN007` receive/filter/forward diagnostics and `NET006` UDP serialization/socket-send counters. `ROUTE016` includes the furthest confirmed stage without capturing payloads or tokens; snapshots are emitted only when Debug is enabled.
+- `docs/SELF_HOSTING.md`: Linux relay, trusted offline issuer and Windows manual JSON import from start to finish.
+- `docs/SESSION_CONFIG.md`, `docs/DIAGNOSTICS.md` and `docs/TROUBLESHOOTING.md` explain strict config, one-time grants, log codes and incident triage.
+- Offline example `tools/selfhost_issuer` for generating an Ed25519 issuer and a short-lived, one-time GSK2 JSON session config for self-host testing.
+
+### Changed
+- README EN/VI and architecture/provider docs now document **both** `glo://` handoff and manual JSON config import; removed the official API endpoint URL from both README homepages.
+- Windows client Facebook link configured, and “How to use” opens **Use the official GLO service** (`/auth/`) with an updated non-clipping label.
+- Retained `VERSION=0.0.2` compatibility and unchanged wire/routing behavior; this is a diagnostic/documentation beta revision, not a confirmed fix for the October 8 Roblox route-verification incident.
+
+### Fixed
+- Versioned changelog/docs so Windows and self-host operators can distinguish a missing Wintun packet from a local UDP send failure or an unverified reverse flow.
+- Production-safe diagnostic overhead: no counter writes while Debug is off or after verification, 2-second grouped `ROUTE016`/snapshot throttle with suppression count, and bounded cross-process debug-log rotation (5 MiB each; two backups). `NET005` remains reserved for Winsock socket-configuration failures. No routing or wire-protocol changes.
+
 ## [0.0.2-beta] - 2026-10-04
 
 ### Added

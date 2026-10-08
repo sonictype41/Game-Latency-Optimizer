@@ -157,9 +157,9 @@ def main():
     display_version = (ROOT / "DISPLAY_VERSION").read_text(encoding='utf-8').strip()
     if not version or not release:
         raise ValueError("VERSION and RELEASE must not be empty")
-    release_pattern=rf"{re.escape(version)}(?:-(?:r[1-9][0-9]*|alpha(?:\.[1-9][0-9]*)?|beta(?:\.[1-9][0-9]*)?))?"
+    release_pattern=rf"{re.escape(version)}(?:-(?:r[1-9][0-9]*|alpha(?:\.[1-9][0-9]*)?|beta(?:(?:\.[1-9][0-9]*)|(?:-r[1-9][0-9]*))?))?"
     if not re.fullmatch(release_pattern, release):
-        raise ValueError("RELEASE must be VERSION, VERSION-rN, VERSION-alpha[.N], or VERSION-beta[.N]")
+        raise ValueError("RELEASE must be VERSION, VERSION-rN, VERSION-alpha[.N], or VERSION-beta[.N|-rN]")
     if display_version != release and not re.fullmatch(rf"{re.escape(version)}-[0-9]{{8}}", display_version):
         raise ValueError("DISPLAY_VERSION must equal RELEASE (legacy VERSION-MMDDYYYY is also accepted)")
     branding = read_branding()

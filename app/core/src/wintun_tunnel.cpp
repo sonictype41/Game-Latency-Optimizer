@@ -149,6 +149,38 @@ struct WintunTunnel::Impl {
     std::atomic<std::uint32_t> last_forwarded_host{0};
     std::atomic<std::uint64_t> last_forwarded_at_ms{0};
 
+    // Per-route aggregate counters. The route-control thread publishes the epoch
+    // after the Windows host route is verified. In-flight stale packets are ignored.
+    std::atomic<std::uint64_t> diag_epoch{0};
+    std::atomic_bool diag_enabled{false};
+    std::atomic<std::uint64_t> d_rx_total{0}, d_rx_game_host{0}, d_rx_game_udp{0};
+    std::atomic<std::uint64_t> d_forwarded{0}, d_send_failed{0}, d_bad_ip{0}, d_other_host{0};
+    std::atomic<std::uint64_t> d_non_udp{0}, d_wrong_port{0}, d_stale_epoch{0};
+    std::atomic<std::uint64_t> d_malformed_udp{0}, d_oversize{0};
+    void count(std::uint64_t epoch, std::atomic<std::uint64_t>& metric) noexcept {
+        // No counter writes outside verification or when Debug is off.
+        if (diag_enabled.load(std::memory_order_relaxed) && epoch != 0 &&
+            diag_epoch.load(std::memory_order_relaxed) == epoch)
+            metric.fetch_add(1, std::memory_order_relaxed);
+    }
+    void reset_diag(std::uint64_t epoch) noexcept {
+        diag_epoch.store(0, std::memory_order_release);
+        d_rx_total=0; d_rx_game_host=0; d_rx_game_udp=0;
+        d_forwarded=0; d_send_failed=0; d_bad_ip=0; d_other_host=0;
+        d_non_udp=0; d_wrong_port=0; d_stale_epoch=0; d_malformed_udp=0; d_oversize=0;
+        diag_epoch.store(epoch, std::memory_order_release);
+    }
+    WintunRouteDiagnostics diag() const noexcept {
+        WintunRouteDiagnostics d;
+        d.epoch=diag_epoch.load(std::memory_order_acquire);
+        d.rx_total=d_rx_total.load(); d.rx_game_host=d_rx_game_host.load(); d.rx_game_udp=d_rx_game_udp.load();
+        d.forwarded=d_forwarded.load(); d.send_failed=d_send_failed.load(); d.bad_ip=d_bad_ip.load();
+        d.other_host=d_other_host.load(); d.non_udp=d_non_udp.load(); d.wrong_port=d_wrong_port.load();
+        d.stale_epoch=d_stale_epoch.load(); d.malformed_udp=d_malformed_udp.load(); d.oversize=d_oversize.load();
+        return d;
+    }
+
+
     struct LocalFlow {
         std::uint16_t port{};
         std::uint32_t local_ip_host{};
@@ -442,6 +474,8 @@ struct WintunTunnel::Impl {
 
             const auto active_route = routes_snapshot();
             const auto& active_routes = active_route.routes;
+            if (!active_routes.empty()) count(active_route.generation, d_rx_total);
+            if (!active_routes.empty() && size < 20) count(active_route.generation, d_bad_ip);
             if (!active_routes.empty() && size >= 20) {
                 const auto* b = reinterpret_cast<const std::uint8_t*>(packet);
                 const std::uint8_t ver = b[0] >> 4u;
@@ -457,7 +491,10 @@ struct WintunTunnel::Impl {
                         }
                     }
                     if (captured) {
+                        count(active_route.generation, d_rx_game_host);
                         if (b[9] != IPPROTO_UDP || size < ihl + 8) {
+                            if (b[9] != IPPROTO_UDP) count(active_route.generation, d_non_udp);
+                            else count(active_route.generation, d_malformed_udp);
                             // A /32 route is protocol-agnostic, so ICMP/TCP destined for
                             // the selected game host can enter Wintun too. Those packets
                             // are not game tunnel traffic. Drop them locally, keep the
@@ -484,6 +521,7 @@ struct WintunTunnel::Impl {
                             // tunnel traffic. Gameplay may move among high ports on the
                             // same host, so every profile-valid port remains accepted.
                             if (!roblox_gameplay_udp_port_allowed(dst_port)) {
+                                count(active_route.generation, d_wrong_port);
                                 auto seen = non_game_notified_generation.load(std::memory_order_relaxed);
                                 if (seen != active_route.generation &&
                                     non_game_notified_generation.compare_exchange_strong(
@@ -501,11 +539,13 @@ struct WintunTunnel::Impl {
                                 // was dequeued, drop the stale packet rather than
                                 // forwarding it under a new epoch.
                                 if (!route_generation_current(active_route.generation)) {
+                                    count(active_route.generation, d_stale_epoch);
                                     release_receive(session, packet);
                                     continue;
                                 }
                                 const auto udp_len = get16(u + 4);
                                 if (udp_len >= 8 && ihl + udp_len <= size) {
+                                    count(active_route.generation, d_rx_game_udp);
                                     const std::size_t payload_len = udp_len - 8;
                                     if (payload_len <= protocol::kMaxInnerUdpPayload &&
                                         payload_len + protocol::kFlowMetaSize <= protocol::kMaxPayload) {
@@ -515,6 +555,7 @@ struct WintunTunnel::Impl {
                                         const auto flow_id = flow_for_tuple(src_port, src, ep, active_route.generation);
                                         const auto payload = std::span<const std::uint8_t>(u + 8, payload_len);
                                         if (data_sender && data_sender(flow_id, sequence, dst, dst_port, src_port, payload)) {
+                                            count(active_route.generation, d_forwarded);
                                             last_forwarded_host.store(ep.remote_ipv4_host, std::memory_order_release);
                                             last_forwarded_at_ms.store(steady_now_ms(), std::memory_order_release);
                                             bool first_for_flow = false;
@@ -529,12 +570,22 @@ struct WintunTunnel::Impl {
                                                                             ep.remote_ipv4_host, ep.remote_port, src_port};
                                                 event_fn(ev);
                                             }
+                                        } else {
+                                            count(active_route.generation, d_send_failed);
                                         }
+                                    } else {
+                                        count(active_route.generation, d_oversize);
                                     }
+                                } else {
+                                    count(active_route.generation, d_malformed_udp);
                                 }
                             }
                         }
+                    } else {
+                        count(active_route.generation, d_other_host);
                     }
+                } else {
+                    count(active_route.generation, d_bad_ip);
                 }
             }
             release_receive(session, packet);
@@ -658,6 +709,16 @@ bool WintunTunnel::arm(const std::string& dll_path,
     return true;
 }
 
+WintunRouteDiagnostics WintunTunnel::route_diagnostics() const noexcept {
+    return impl_ ? impl_->diag() : WintunRouteDiagnostics{};
+}
+
+void WintunTunnel::set_diagnostics_enabled(bool enabled) noexcept {
+    if (!impl_) return;
+    if (!enabled) impl_->diag_epoch.store(0, std::memory_order_release);
+    impl_->diag_enabled.store(enabled, std::memory_order_release);
+}
+
 void WintunTunnel::clear_routes() {
     if (!impl_) return;
     impl_->clear_routes();
@@ -685,6 +746,8 @@ bool WintunTunnel::set_endpoint(const PreflightEndpoint& endpoint, std::string& 
         error = "Route installed but Windows did not select GLO: " + verify;
         return false;
     }
+    if (impl_->diag_enabled.load(std::memory_order_acquire))
+        impl_->reset_diag(impl_->routes_snapshot().generation);
     route_active_ = true;
     return true;
 }

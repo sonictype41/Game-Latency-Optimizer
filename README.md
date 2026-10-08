@@ -9,7 +9,6 @@ The desktop client can connect through the official GLO service or a compatible 
 ## Official project and brand
 
 - Website: <https://gloptimizer.com>
-- Official service endpoint: `https://api.gloptimizer.com`
 - Repository: <https://github.com/sonictype41/Game-Latency-Optimizer>
 
 The source code is MIT licensed. The GLO name/logo and claims of official affiliation are governed separately by [`BRAND_POLICY.md`](BRAND_POLICY.md). Open source does not mean a fork may impersonate the official project or service.
@@ -26,31 +25,37 @@ The source code is MIT licensed. The GLO name/logo and claims of official affili
 - `docs/` — architecture, provider handoff and relay-operator documentation.
 - `vendor/`, `third_party/` — pinned local build inputs required for offline builds.
 
-## Provider handoff boundary
+## Two supported ways to connect
 
-The official/native app flow is provider-driven:
+GLO supports **provider handoff** and **manual session config**. These are two inputs to the same strict client-side validator and secure transport—not two routing protocols. The official network uses provider handoff. Manual config is intended for independent/self-hosted operators.
 
 ```text
-service / provider
-    |
-    | glo:// short-lived handoff
-    v
-GLO desktop client
-    |
-    | POST /app/handoff/inspect
-    | <- candidate relay endpoints + relay identity keys
-    |
-    | probe candidates from the client
-    |
-    | POST /app/handoff/redeem with measurements
-    v
-service/provider returns a session config
-    |
-    v
-secure GLO client <============================> GLO relay
+A. Official / compatible provider              B. Self-host / independent issuer
+   web service                                    signed config JSON
+       |                                                |
+       | short-lived glo:// app link                     | Paste JSON / Import file / --config
+       v                                                v
+   GLO desktop client                              GLO desktop client
+       |                                                |
+       | HTTPS inspect -> relay candidates               |
+       | client probes -> RTT measurements               |
+       | HTTPS redeem -> session config                  |
+       +---------------------+--------------------------+
+                             |
+                    strict session config
+                             |
+                  secure GLO client <=====> Linux relay
+                             |
+                  supported gameplay UDP only
+                             |
+                         game server
 ```
 
-The final portable session config is strict and data-only. It contains only relay/session material required by the client and never contains service credentials, private keys or local executable paths. See [`docs/HANDOFF_PROVIDER.md`](docs/HANDOFF_PROVIDER.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+**URI handoff:** inspect returns candidates and relay public identity; the client probes the candidates, redeems the short-lived token and receives signed session material. The client does not expose service credentials or private keys.
+
+**Manual JSON:** a self-host issuer creates a compatible, signed, one-time session config. A user can paste or import it directly; no inspect/redeem HTTP API is required. This is **not** a raw IP-only mode: the client still validates the 152-byte GSK2 admission grant and relay identity. The sample JSON in `tools/` is deliberately **not connectable**.
+
+Read the step-by-step [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md), [`docs/SESSION_CONFIG.md`](docs/SESSION_CONFIG.md), [`docs/HANDOFF_PROVIDER.md`](docs/HANDOFF_PROVIDER.md), and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Build
 
@@ -79,6 +84,8 @@ Build caches live under `${GLO_BUILD_CACHE_DIR:-$TMPDIR/glo-build-cache}` and ar
 `VERSION` records protocol/client compatibility; `RELEASE` identifies the next public release snapshot. GitHub automation validates it, creates the matching tag, and publishes the release. Public version history belongs in [`CHANGELOG.md`](CHANGELOG.md) and GitHub Releases, not in this README.
 
 ## Self-hosting
+
+**New:** Follow [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) from a blank Linux machine to a signed config and a Windows client. The optional offline issuer example under `tools/selfhost_issuer/` does not implement provider HTTP APIs. For packet-verification failures see [`docs/DIAGNOSTICS.md`](docs/DIAGNOSTICS.md) and [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
 
 Start with:
 

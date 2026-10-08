@@ -66,6 +66,10 @@ add_executable(glo_route_handover_test tests/route_handover_test.cpp)
 target_include_directories(glo_route_handover_test PRIVATE app/core/include)
 add_test(NAME glo_route_handover_test COMMAND glo_route_handover_test)
 
+add_executable(glo_log_rotation_test tests/log_rotation_test.cpp)
+target_include_directories(glo_log_rotation_test PRIVATE app/core/include)
+add_test(NAME glo_log_rotation_test COMMAND glo_log_rotation_test)
+
 set(SODIUM_ROOT "" CACHE PATH "libsodium installation prefix for the TARGET architecture")
 find_path(SODIUM_INCLUDE_DIR sodium.h HINTS "${SODIUM_ROOT}/include")
 find_library(SODIUM_LIBRARY NAMES sodium libsodium HINTS "${SODIUM_ROOT}/lib")

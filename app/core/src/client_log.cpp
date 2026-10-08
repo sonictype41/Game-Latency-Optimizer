@@ -1,4 +1,5 @@
 #include "glo/client_log.hpp"
+#include "glo/log_rotation.hpp"
 #include "glo/user_paths.hpp"
 
 #include <windows.h>
@@ -10,6 +11,28 @@
 
 namespace glo {
 namespace {
+
+// Elevated worker and unelevated frontend can append concurrently. Protect
+// file size check + rollover + append with one named mutex per logon session.
+class CrossProcessLogLock {
+public:
+    CrossProcessLogLock() {
+        handle_ = CreateMutexW(nullptr, FALSE, L"Local\\GLO_DebugLog_Write_v1");
+        if (!handle_) return;
+        const DWORD result = WaitForSingleObject(handle_, 1000);
+        acquired_ = result == WAIT_OBJECT_0 || result == WAIT_ABANDONED;
+    }
+    ~CrossProcessLogLock() {
+        if (handle_) {
+            if (acquired_) ReleaseMutex(handle_);
+            CloseHandle(handle_);
+        }
+    }
+    [[nodiscard]] bool acquired() const noexcept { return acquired_; }
+private:
+    HANDLE handle_{nullptr};
+    bool acquired_{false};
+};
 
 const char* level_name(LogLevel level) noexcept {
     switch (level) {
@@ -77,24 +100,24 @@ void ClientLog::debug(const std::string& code, const std::string& message) {
 void ClientLog::info(const std::string& code, const std::string& message) {
     write(LogLevel::Info, code, message, {});
 }
-void ClientLog::warn(const std::string& code, const std::string& message, std::chrono::milliseconds interval) {
-    write(LogLevel::Warn, code, message, interval);
+bool ClientLog::warn(const std::string& code, const std::string& message, std::chrono::milliseconds interval) {
+    return write(LogLevel::Warn, code, message, interval);
 }
 void ClientLog::error(const std::string& code, const std::string& message, std::chrono::milliseconds interval) {
     write(LogLevel::Error, code, message, interval);
 }
 
-void ClientLog::write(LogLevel level, const std::string& code, const std::string& message,
+bool ClientLog::write(LogLevel level, const std::string& code, const std::string& message,
                       std::chrono::milliseconds min_interval) {
     std::scoped_lock lock(mu_);
-    if (!enabled_) return;
+    if (!enabled_) return false;
 
     const auto now = std::chrono::steady_clock::now();
     if (min_interval.count() > 0) {
         const auto it = last_.find(code);
         if (it != last_.end() && now - it->second < min_interval) {
             ++suppressed_[code];
-            return;
+            return false;
         }
         last_[code] = now;
     }
@@ -107,15 +130,12 @@ void ClientLog::write(LogLevel level, const std::string& code, const std::string
     }
     line << "\r\n";
 
-    // Open in append mode for each record. This avoids truncation on reconnect and
-    // avoids a long-lived cross-process file handle while still flushing every line.
-    std::ofstream file(debug_log_path(), std::ios::out | std::ios::app | std::ios::binary);
-    if (!file) {
-        enabled_ = false;
-        return;
-    }
-    file << line.str();
-    file.flush();
+    // The mutex protects both processes' size checks and rotations. Never
+    // bypass the bound on contention/rotation failure.
+    CrossProcessLogLock interprocess;
+    if (!interprocess.acquired()) return false;
+    if (!log_rotation::append(debug_log_path(), line.str())) return false;
+    return true;
 }
 
 }  // namespace glo

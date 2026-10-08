@@ -37,3 +37,7 @@ The provider should make retries idempotent for the same handoff/client nonce on
 ## 6. Independent branding
 
 A compatible implementation is not automatically an official GLO service. Identify the actual operator and follow [`../BRAND_POLICY.md`](../BRAND_POLICY.md).
+
+## 7. Manual configuration is an independent entry point
+
+`glo://` inspect/redeem is **not mandatory** for self-hosting. The Windows client can also paste/import a strict JSON session config signed by an independent issuer. This bypasses only the provider HTTP handoff—not GSK2 relay admission, relay-identity validation or secure transport. See [SESSION_CONFIG.md](SESSION_CONFIG.md), [SELF_HOSTING.md](SELF_HOSTING.md).

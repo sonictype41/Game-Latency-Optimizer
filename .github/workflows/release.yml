@@ -45,7 +45,7 @@ jobs:
           fi
 
           case "$RELEASE" in
-            "$VERSION"|"$VERSION"-alpha|"$VERSION"-alpha.*|"$VERSION"-beta|"$VERSION"-beta.*|"$VERSION"-rc|"$VERSION"-rc.*)
+            "$VERSION"|"$VERSION"-alpha|"$VERSION"-alpha.*|"$VERSION"-beta|"$VERSION"-beta.*|"$VERSION"-beta-r[1-9]*|"$VERSION"-rc|"$VERSION"-rc.*)
               ;;
             *)
               echo "RELEASE ($RELEASE) is not compatible with VERSION ($VERSION)." >&2

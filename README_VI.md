@@ -9,7 +9,6 @@ Client desktop có thể kết nối qua dịch vụ GLO chính thức hoặc pr
 ## Dự án và nhận diện chính thức
 
 - Website: <https://gloptimizer.com>
-- Endpoint dịch vụ chính thức: `https://api.gloptimizer.com`
 - Repository: <https://github.com/sonictype41/Game-Latency-Optimizer>
 
 Mã nguồn dùng giấy phép MIT. Tên/logo GLO và tuyên bố liên kết chính thức được quản lý riêng trong [`BRAND_POLICY.md`](BRAND_POLICY.md). Mã nguồn mở không đồng nghĩa fork được quyền giả danh dự án hay dịch vụ GLO chính thức.
@@ -26,29 +25,33 @@ Mã nguồn dùng giấy phép MIT. Tên/logo GLO và tuyên bố liên kết ch
 - `docs/` — kiến trúc, provider handoff và hướng dẫn relay.
 - `vendor/`, `third_party/` — dependency local đã pin để build offline.
 
-## Handoff provider
+## Hai cách kết nối được hỗ trợ
+
+GLO hỗ trợ **handoff qua provider** và **session config JSON thủ công**. Cả hai đều đi qua bước xác thực cấu hình và secure transport giống nhau. Mạng chính thức dùng handoff; JSON thủ công dành cho dịch vụ tự host hoặc bên thứ ba.
 
 ```text
-service / provider
-    |
-    | glo:// handoff ngắn hạn
-    v
-GLO desktop client
-    |
-    | /app/handoff/inspect
-    | <- danh sách relay + relay identity key
-    |
-    | client tự probe candidate
-    |
-    | /app/handoff/redeem + measurements
-    v
-service/provider trả session config
-    |
-    v
-GLO client <============================> GLO relay
+A. Provider (Official / độc lập)                  B. Self-host / issuer độc lập
+   Website cấp glo:// ngắn hạn                      Cấu hình JSON đã ký
+          |                                                |
+     Client nhận URI                            Client dán/nhập file JSON
+          |                                                |
+     HTTPS inspect: nhận candidate relay                    |
+     Probe RTT từ máy người dùng                             |
+     HTTPS redeem: nhận session config                       |
+          +-----------------------+-------------------------+
+                                  |
+                      Kiểm tra session config nghiêm ngặt
+                                  |
+                       GLO client <=====> GLO relay
+                                  |
+                     Chỉ chuyển tiếp gameplay được hỗ trợ
 ```
 
-Session config cuối là dữ liệu nghiêm ngặt, chỉ chứa material cần cho relay/session và không chứa credential dịch vụ, private key hay đường dẫn executable local. Xem [`docs/HANDOFF_PROVIDER.md`](docs/HANDOFF_PROVIDER.md) và [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+**Handoff URI:** client inspect, tự đo candidate, redeem token rồi nhận grant/config; token có thời hạn ngắn và không chứa private key.
+
+**JSON thủ công:** dán JSON, import file hoặc dùng `--config`. Không cần endpoint inspect/redeem, nhưng **vẫn phải có GSK2 grant 152 byte hợp lệ** được issuer ký và relay tin cậy. Ví dụ ở `tools/Session_Config.example.json` chỉ là mẫu, không thể kết nối bằng dữ liệu placeholder.
+
+Xem [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md), [`docs/SESSION_CONFIG.md`](docs/SESSION_CONFIG.md), [`docs/HANDOFF_PROVIDER.md`](docs/HANDOFF_PROVIDER.md) và [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Build
 
@@ -70,6 +73,8 @@ Cache build nằm dưới `${GLO_BUILD_CACHE_DIR:-$TMPDIR/glo-build-cache}` và 
 `VERSION` ghi compatibility của protocol/client; `RELEASE` nhận diện snapshot phát hành công khai tiếp theo. GitHub automation sẽ kiểm tra giá trị này, tạo tag tương ứng và publish release. Lịch sử phiên bản công khai nằm trong [`CHANGELOG.md`](CHANGELOG.md) và GitHub Releases, không hardcode trong README này.
 
 ## Self-host
+
+**Bắt đầu:** [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) hướng dẫn từ Linux trống đến relay, ký grant và import JSON trên Windows. `tools/selfhost_issuer/` chỉ là issuer offline, không phải hệ thống tài khoản/API. Khi gặp ROUTE016, xem [`docs/DIAGNOSTICS.md`](docs/DIAGNOSTICS.md) và [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
 
 - [`docs/RELAY_OPERATOR.md`](docs/RELAY_OPERATOR.md) — vận hành relay.
 - [`docs/HANDOFF_PROVIDER.md`](docs/HANDOFF_PROVIDER.md) — provider/handoff tương thích.
