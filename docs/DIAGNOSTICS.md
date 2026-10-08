@@ -12,10 +12,17 @@ Diagnostic counters are collected **only during relay verification while Debug l
 | `RELAY` | Control transport handshake/heartbeat | `RELAY003`, `RELAY004` |
 | `WINTUN` | Adapter/session and bounded receive-path counters | `WINTUN002`, `WINTUN007` |
 | `PROC` | Game process detection/lifecycle | `PROC002` |
+| `HINT` | Optional game-local, validated early endpoint hint | `HINT002` |
 | `GATE` | WFP endpoint gate and candidate IP/port | `GATE003`, `GATE005` |
 | `ROUTE` | Exact Windows route, relay verification, fail-open | `ROUTE007`, `ROUTE008`, `ROUTE009`, `ROUTE016` |
 | `NET` | Local socket delivery of encapsulated gameplay | `NET005` (socket configuration), `NET006` (verification send summary) |
 | `QUAL`, `TELEM` | Quality statistics after relay lock | `QUAL001`, `TELEM001` |
+
+## New in OSS 0.0.3-beta: early hint and same-PID recovery
+
+`HINT001` reports that an optional local hint watcher could not run or stopped; GLO falls back to WFP/Direct without treating this as a transport failure. `HINT002 event=endpoint_candidate source=game_log` means the local Roblox adapter recognized an allowlisted gameplay endpoint. `ROUTE007 source=game_hint` means an exact `/32` was installed based on that hint; `source=wfp_gate` indicates the original WFP discovery. **Neither means the game was routed.** Require `ROUTE008` and `ROUTE009` (matching reverse gameplay) as before. `ROUTE014 reason=game_session_started|game_session_ended` reports a reset in the same PID based on a local session boundary. Unrecognized game logs never authorize a broad route.
+
+Roblox logs can be written after Windows has already selected a UDP socket's source/interface. A pre-connect hint is a **best-effort** improvement only; a failure to capture packets remains possible. No new driver, injection or packet capture is used. Details: [ROUTING_LIFECYCLE.md](ROUTING_LIFECYCLE.md).
 
 ## Successful route
 

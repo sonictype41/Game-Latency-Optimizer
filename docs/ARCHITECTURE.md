@@ -39,3 +39,11 @@ The Windows app contains game detection, WFP/Wintun routing, secure transport, r
 ## Relay boundary
 
 The relay owns transport admission, session/flow capacity, target policy, shaping, expiry and gameplay forwarding. It trusts configured issuer public keys and does not require service credentials.
+
+## Client routing lifecycle (0.0.3-beta)
+
+Game-specific detection lives outside the common routing controller. The common controller consumes validated `SessionStarted`, `SessionEnded`, and optional `EndpointCandidate` hints through `GameSessionHint`, as well as the established WFP/Wintun events. Only the Roblox log adapter is currently enabled; future games must provide independent adapters and validate their own process, ports and destinations. **A generic interface does not imply Minecraft/Valorant support.**
+
+An early endpoint hint may install a single `/32` before a UDP socket chooses its source/interface; fallback is the existing dynamic Windows WFP endpoint gate. The relay is locked only after genuine gameplay has crossed Wintun and its matching reverse packet has been verified. On a new match in the same PID, the route controller clears stale state and can rearm WFP without restarting GLO. On failure it removes temporary routes/filters and returns Direct. No kernel callout, custom driver, DLL injection, anti-cheat access or game-file modification is introduced.
+
+See [ROUTING_LIFECYCLE.md](ROUTING_LIFECYCLE.md) for limitations, tests and extension points.

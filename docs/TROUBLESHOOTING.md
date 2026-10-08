@@ -14,6 +14,10 @@ This guide distinguishes **control plane reachability**, **Windows routing**, an
 | Latency or loss after route locks | `QUAL001`, `DATA001`, `LIMIT001` | Check relay egress shaping/drop counters and upstream conditions; avoid masking losses with longer verification timeout |
 | Different source/IP per provider | Manual config imports | Treat unknown/self-host issuers as untrusted; only import intentional configs |
 
-**Incident pattern observed 2026-10-08:** some clients detected Roblox endpoints and installed exact routes, yet timed out before `ROUTE008`. The cause is under investigation. Do not state that a Roblox protocol or terms-of-service change has been confirmed. The new counters assist diagnosis; they do not change the route state machine or guarantee a fix.
+**Incident pattern observed 2026-10-08:** some clients detected Roblox endpoints and installed exact routes, yet timed out before `ROUTE008`. Windows OLD/NEW UDP probes indicated that a socket connected before installation of the `/32` may retain an earlier LAN route/source, even when a freshly created UDP socket reaches Wintun. Roblox 0.742 was installed between a known working and failed session, but the exact Roblox behavior change has **not** been proven. OSS 0.0.3-beta adds a best-effort log hint and same-PID match recovery, **not a confirmed universal fix**. Require `ROUTE008` and `ROUTE009` before calling the relay path healthy.
 
 Minimal useful report: client release version, Windows version, a complete sanitized 10–20 second debug window, the selected relay's `SESS/ENG/DATA` lines, and whether other relays reproduce. Never submit bearer grants or private key files.
+
+### Re-entering a game without restarting the process (OSS 0.0.3-beta)
+
+Look for `ROUTE014 reason=game_session_started` when Roblox starts another match in the same PID. The optional game-log adapter can trigger this reset and retry a bounded verification. `HINT002` may be absent if the local log is missing, delayed or no longer contains a supported format. A `ROUTE007 source=game_hint` that ends in `ROUTE016` still means **Direct**, not successful relay gameplay. Never assume that extending the verification deadline, disabling anti-cheat or routing the whole network is a safe fix.

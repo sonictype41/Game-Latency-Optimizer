@@ -4,6 +4,25 @@ All notable public changes to GLO OSS are documented here.
 
 The public release history starts at `v0.0.1-beta`.
 
+## [0.0.3-beta] - 2026-10-08
+
+### Added
+- Optional, game-specific **read-only Roblox log hint adapter** behind a game-neutral session/endpoint event interface. It watches locally for match boundaries and UDMUX gameplay endpoint hints; reads only matching fields, never uploads log lines, and never needs game modification, injection, driver installation, or anti-cheat access.
+- `HINT002` diagnostic event for a validated endpoint hint. `ROUTE007` now identifies its source (`game_hint` or `wfp_gate`) to distinguish a pre-connect hint from a WFP discovery on an existing UDP association.
+- Portable parser tests and `docs/ROUTING_LIFECYCLE.md` explaining extension to other supported games, the limited trust of hints, and known Windows socket-routing limitations.
+
+### Changed
+- The common Windows routing controller accepts optional early, validated endpoint hints. It can prepare a narrowly scoped `/32` before the game opens a UDP flow **when the hint arrives early enough**, while retaining the existing WFP discovery fallback and post-forward/reverse-flow verification.
+- Per-game session-start/end events can reset the route cycle **without a Roblox PID change**. Same-process recovery re-arms the existing dynamic WFP gate and keeps bounded Direct fail-open when verification fails.
+- Relay dataplane, node agent, signed session grants, GLO6 wire format, Wintun runtime, default game-only UDP forwarding rules, and production service logic remain unchanged.
+
+### Fixed
+- Recoverable DirectLocked state no longer requires terminating the game process when a trustworthy game-session boundary is observed.
+- DirectLocked connection status is retained in the Windows client instead of reverting immediately to a generic waiting-for-gameplay message.
+
+### Known limitations
+- This is **best-effort compatibility**, not a verified fix for all Roblox 0.742 connections. UDMUX log emission may happen too late to precede a socket's route/source-address selection; GLO cannot transparently migrate an already connected UDP socket using its current non-invasive, user-mode design. Route verification and fail-open remain mandatory. Native Windows build and live multiplayer validation are required before wide deployment.
+
 ## [0.0.2-beta-r1] - 2026-10-08
 
 ### Added

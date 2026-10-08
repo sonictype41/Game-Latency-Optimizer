@@ -95,3 +95,7 @@ Start with:
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for bundled dependency notices.
 
 MIT licensed GLO source is covered by `LICENSE`; bundled third-party components retain their own licenses.
+
+## Routing compatibility (OSS 0.0.3-beta)
+
+The Windows client uses a generic route-cycle controller with optional per-game session and endpoint hints. The initial Roblox adapter reads only local, allowlisted gameplay endpoint and match-boundary fields from Roblox Player logs; no injection, game modifications, custom drivers or anti-cheat hooks are used. The existing WFP/Wintun fallback and Direct fail-open remain. Early hints are **best effort**, not a promise that an existing UDP socket can be moved to the relay. Confirm gameplay by `ROUTE008` and `ROUTE009`, not `ROUTE007` alone. See [routing lifecycle](docs/ROUTING_LIFECYCLE.md) and [diagnostics](docs/DIAGNOSTICS.md). Other games remain unsupported until their independent profiles/adapters are implemented.

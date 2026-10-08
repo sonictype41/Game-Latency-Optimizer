@@ -1,4 +1,4 @@
-# GLO v0.0.2-beta security notes
+# GLO v0.0.3-beta security notes
 
 ## Reporting
 

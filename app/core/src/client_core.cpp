@@ -6,6 +6,7 @@
 #include "glo/protocol.hpp"
 #include "glo/quality_metrics.hpp"
 #include "glo/game_detector.hpp"
+#include "glo/game_log_hint_watcher.hpp"
 #include "glo/route_policy.hpp"
 #include "glo/route_scope.hpp"
 #include "glo/route_handover.hpp"
@@ -677,8 +678,13 @@ void ClientCore::worker(ClientOptions options) {
             publish(degraded ? ConnectionState::Degraded : ConnectionState::Direct, "In game - Direct");
         };
 
-        auto begin_verify = [&](const PreflightEndpoint& ep) -> bool {
-            if (!preflight_endpoint_allowed(ep)) {
+        auto begin_verify = [&](const PreflightEndpoint& ep, bool early_hint = false) -> bool {
+            // Early hints have no local UDP port yet. They are validated by the
+            // game adapter before reaching the routing core; never broaden /32.
+            const bool permitted = early_hint
+                ? game_endpoint_hint_allowed(options.game_id, ep)
+                : preflight_endpoint_allowed(ep);
+            if (!permitted) {
                 fail_open("GATE006", "candidate_outside_gameplay_profile", DirectReason::LocalFallback, true);
                 return false;
             }
@@ -691,7 +697,9 @@ void ClientCore::worker(ClientOptions options) {
             const PreflightEndpoint game_ep = ep;
             std::string route_error;
             const bool route_ok = tunnel.running() && tunnel.set_endpoint(game_ep, route_error);
-            // The exact route must exist before releasing the blocked first flow.
+            // A log hint can prepare a route before the game connects; a WFP
+            // candidate is already a live flow, so route migration is best effort.
+            // Never leave a blocking gate installed after route preparation.
             disarm_gate();
             if (!route_ok || !model.verifying(generation)) {
                 stop_route_diagnostics();
@@ -710,7 +718,8 @@ void ClientCore::worker(ClientOptions options) {
             routed_gameplay_host.store(ep.remote_ipv4_host, std::memory_order_release);
             forwarded.clear();
             verify_deadline = Clock::now() + std::chrono::milliseconds(options.force_handover_grace_ms);
-            log.info("ROUTE007", "event=exact_route_installed host=" + ipv4_text(game_ep.remote_ipv4_host) + "/32");
+            log.info("ROUTE007", "event=exact_route_installed host=" + ipv4_text(game_ep.remote_ipv4_host) +
+                                 "/32 source=" + (early_hint ? std::string("game_hint") : std::string("wfp_gate")));
             return true;
         };
 
@@ -754,6 +763,14 @@ void ClientCore::worker(ClientOptions options) {
             }
             log.info("ROUTE014", "event=gameplay_cycle_reset reason=" +
                                   (ev.detail.empty() ? std::string("process_lifecycle") : ev.detail));
+            // A match can end/start in the SAME game process. Process-resolved
+            // events only fire on PID changes, so rearm explicitly for this case.
+            if (known_process_id != 0 && !known_image_path.empty()) {
+                std::string error;
+                if (!arm_initial(error))
+                    fail_open("GATE002", error.empty() ? "cycle_rearm_failed" : error,
+                              DirectReason::LocalFallback, true);
+            }
         };
 
         for (;;) {
@@ -785,6 +802,29 @@ void ClientCore::worker(ClientOptions options) {
                             fail_open("GATE002", error.empty() ? "endpoint_gate_install_failed" : error,
                                       DirectReason::LocalFallback, true);
                     }
+                    break;
+                }
+                case RouteEventType::GameplaySessionStarted:
+                case RouteEventType::GameplaySessionEnded: {
+                    // Optional per-game lifecycle evidence; independent of PID.
+                    // Each event is emitted only once by an incremental log tailer.
+                    if (model.state() != RouteControlState::WaitingForGame &&
+                        known_process_id != 0 && !known_image_path.empty()) {
+                        ev.process_id = known_process_id;
+                        ev.detail = ev.type == RouteEventType::GameplaySessionStarted
+                            ? "game_session_started" : "game_session_ended";
+                        reset_cycle(ev);
+                    }
+                    break;
+                }
+                case RouteEventType::EarlyEndpointHintSeen: {
+                    if (!ev.endpoint || model.state() != RouteControlState::WaitingForGame ||
+                        known_process_id == 0 || known_image_path.empty()) break;
+                    // The adapter validates the endpoint, and generic core
+                    // performs its own check before touching the routing table.
+                    log.info("HINT002", "event=endpoint_candidate source=game_log host=" +
+                                         ipv4_text(ev.endpoint->remote_ipv4_host));
+                    begin_verify(*ev.endpoint, true);
                     break;
                 }
                 case RouteEventType::EndpointCandidateSeen: {
@@ -860,6 +900,44 @@ void ClientCore::worker(ClientOptions options) {
         stop_route_diagnostics();
         endpoint_gate->disarm();
     });
+
+    // Optional game adapter: watches local Roblox log output only. The common
+    // routing core neither parses RbxTransport nor handles arbitrary game logs.
+    // No packet capture, driver hooks, process injection or network requests.
+    std::atomic_bool game_hints_stop{false};
+    std::thread game_hints_thread;
+    if (options.game_id == GameId::Roblox && options.game_exe_path.empty()) {
+        try {
+            game_hints_thread = std::thread([&] {
+                try {
+                    GameLogHintWatcher watcher(options.game_id);
+                    watcher.run(game_hints_stop, [&](const GameSessionHint& hint) {
+                        RouteEvent event;
+                        event.generation = generation;
+                        switch (hint.kind) {
+                            case GameHintKind::SessionStarted:
+                                event.type = RouteEventType::GameplaySessionStarted;
+                                break;
+                            case GameHintKind::SessionEnded:
+                                event.type = RouteEventType::GameplaySessionEnded;
+                                break;
+                            case GameHintKind::EndpointCandidate:
+                                event.type = RouteEventType::EarlyEndpointHintSeen;
+                                event.endpoint = hint.endpoint;
+                                break;
+                            default: return;
+                        }
+                        route_events.push(std::move(event));
+                    });
+                } catch (...) {
+                    // Optional log adapter must never crash or disconnect GLO.
+                    log.warn("HINT001", "event=local_hint_watcher_stopped", std::chrono::seconds(30));
+                }
+            });
+        } catch (...) {
+            log.warn("HINT001", "event=local_hint_watcher_unavailable", std::chrono::seconds(30));
+        }
+    }
 
     if (!options.game_exe_path.empty()) {
         RouteEvent ev;
@@ -974,6 +1052,8 @@ void ClientCore::worker(ClientOptions options) {
             if (current_game.gameplay_active) {
                 set_route_ui(ActiveRoute::Relay);
                 publish(ConnectionState::Relayed, "In game - Relay");
+            } else if (rs == RouteControlState::DirectLocked && current_game.process_running) {
+                publish(ConnectionState::Direct, "Direct (gameplay relay unavailable)");
             } else {
                 publish(ConnectionState::Monitoring, "Connected - waiting for gameplay");
             }
@@ -1137,6 +1217,8 @@ void ClientCore::worker(ClientOptions options) {
         }
     }
 
+    game_hints_stop.store(true, std::memory_order_release);
+    if (game_hints_thread.joinable()) game_hints_thread.join();
     RouteEvent disconnect;
     disconnect.type = RouteEventType::Disconnect;
     disconnect.generation = generation;

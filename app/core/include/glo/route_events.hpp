@@ -25,6 +25,9 @@ enum class RouteControlState {
 enum class RouteEventType {
     ProcessImageResolved,
     EndpointCandidateSeen,
+    EarlyEndpointHintSeen,
+    GameplaySessionStarted,
+    GameplaySessionEnded,
     GameplayCycleEnded,
     FirstForwarded,
     RelayReverseConfirmed,
