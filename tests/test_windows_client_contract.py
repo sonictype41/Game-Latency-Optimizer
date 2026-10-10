@@ -11,6 +11,16 @@ class WindowsClientContractTests(unittest.TestCase):
         self.assertEqual([],sorted(refs-declared))
     def test_wintun_profile_route_api_uses_exact_ipv4_hosts(self):
         h=(CORE/'include/glo/wintun_tunnel.hpp').read_text(encoding='utf-8'); self.assertIn('set_profile_routes',h); self.assertNotIn('set_endpoint(',h)
+    def test_profile_route_migration_compiles_without_old_gate_symbols(self):
+        core = (CORE/'src/client_core.cpp').read_text(encoding='utf-8')
+        tunnel = (CORE/'src/wintun_tunnel.cpp').read_text(encoding='utf-8')
+        state = (CORE/'include/glo/route_events.hpp').read_text(encoding='utf-8')
+        self.assertNotIn('relay_route_is_current(', core)
+        self.assertIn('profile_relay_activity(rs, host, idle_ms)', core)
+        self.assertIn('inline bool profile_relay_activity(', state)
+        self.assertNotIn('PreflightEndpoint', tunnel)
+        self.assertIn('flow_for_tuple(src_port, src, dst, dst_port, active_route.generation)', tunnel)
+
     def test_ttl_is_not_config_or_provider_data(self):
         h=(CORE/'include/glo/client_core.hpp').read_text(encoding='utf-8'); core=(CORE/'src/client_core.cpp').read_text(encoding='utf-8'); cfg=(CORE/'src/session_config.cpp').read_text(encoding='utf-8')
         self.assertIn('session_remaining_seconds',h); self.assertIn('transport.remaining_seconds()',core); self.assertNotIn('session_ttl',cfg)

@@ -22,6 +22,16 @@ enum class RouteControlState {
     DirectLocked,
 };
 
+// UI/telemetry activity is based on recent successfully forwarded game UDP,
+// not merely on pre-installed system-wide host routes. The relay must first
+// have confirmed a reverse flow. 25 seconds matches the gameplay idle policy.
+inline constexpr std::uint64_t kProfileGameplayActivityIdleMs = 25'000;
+inline bool profile_relay_activity(RouteControlState state, std::uint32_t host,
+                                   std::uint64_t forwarded_idle_ms) noexcept {
+    return state == RouteControlState::RelayLocked && host != 0 &&
+           forwarded_idle_ms < kProfileGameplayActivityIdleMs;
+}
+
 enum class RouteEventType {
     ProcessImageResolved,
     FirstForwarded,

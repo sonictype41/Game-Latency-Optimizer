@@ -1,6 +1,6 @@
 # Changelog — public OSS releases only
 
-## [0.0.4-beta]
+## [0.0.4-beta] - 2026-10-09
 
 ### Added
 - Profile-driven, bounded exact IPv4 host pre-routing through Wintun for UDP games; Roblox SG bundled profile.
@@ -8,6 +8,7 @@
 - Removed the previous WFP BLOCK endpoint gate and Roblox log hint watcher from the OSS client and build.
 - Updated relay-side destination/port policy and diagnostics; kept plaintext gameplay datagrams.
 ### Fixed
+- Fixed the Windows MinGW build by restoring the route-activity predicate and removing stale preflight endpoint references from the Wintun flow tracker.
 - Removed the old first-UDP gate timing failure path; this change requires live Windows validation.
 
 ### Known limitations

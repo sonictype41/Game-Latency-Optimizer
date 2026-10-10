@@ -4,6 +4,16 @@
 
 int main() {
     using namespace glo;
+    // Pre-installed /32 routes alone are not evidence of active gameplay.
+    assert(!profile_relay_activity(RouteControlState::WaitingForGame, 0x80746121u, 0));
+    assert(!profile_relay_activity(RouteControlState::RelayVerifying, 0x80746121u, 0));
+    assert(!profile_relay_activity(RouteControlState::DirectLocked, 0x80746121u, 0));
+    assert(!profile_relay_activity(RouteControlState::RelayLocked, 0, 0));
+    assert(profile_relay_activity(RouteControlState::RelayLocked, 0x80746121u, 0));
+    assert(profile_relay_activity(RouteControlState::RelayLocked, 0x80746121u,
+                                  kProfileGameplayActivityIdleMs - 1));
+    assert(!profile_relay_activity(RouteControlState::RelayLocked, 0x80746121u,
+                                   kProfileGameplayActivityIdleMs));
     RouteControlModel m;
     m.reset(7, RouteControlState::WaitingForGame);
     assert(!m.locked());

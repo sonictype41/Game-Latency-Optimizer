@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -440,20 +441,21 @@ struct WintunTunnel::Impl {
 
     std::uint32_t flow_for_tuple(std::uint16_t local_port,
                                  std::uint32_t local_ip_host,
-                                 const PreflightEndpoint& ep,
+                                 std::uint32_t remote_ip_host,
+                                 std::uint16_t remote_port,
                                  std::uint64_t route_epoch) {
         std::scoped_lock lock(flows_mu);
-        const FlowTuple key{local_port, local_ip_host, ep.remote_ipv4_host, ep.remote_port};
+        const FlowTuple key{local_port, local_ip_host, remote_ip_host, remote_port};
         auto it = tuple_to_flow.find(key);
         if (it != tuple_to_flow.end()) {
-            flow_local[it->second] = LocalFlow{local_port, local_ip_host, ep.remote_ipv4_host, ep.remote_port, route_epoch};
+            flow_local[it->second] = LocalFlow{local_port, local_ip_host, remote_ip_host, remote_port, route_epoch};
             return it->second;
         }
 
         std::uint32_t id = next_flow++;
         while (id == 0 || flow_local.contains(id)) id = next_flow++;
         tuple_to_flow[key] = id;
-        flow_local[id] = LocalFlow{local_port, local_ip_host, ep.remote_ipv4_host, ep.remote_port, route_epoch};
+        flow_local[id] = LocalFlow{local_port, local_ip_host, remote_ip_host, remote_port, route_epoch};
         return id;
     }
 
@@ -550,14 +552,13 @@ struct WintunTunnel::Impl {
                                     const std::size_t payload_len = udp_len - 8;
                                     if (payload_len <= protocol::kMaxInnerUdpPayload &&
                                         payload_len + protocol::kFlowMetaSize <= protocol::kMaxPayload) {
-                                        const PreflightEndpoint ep{dst, dst_port, src_port, 17};
                                         auto sequence = next_data_sequence++;
                                         if (sequence == 0) sequence = next_data_sequence++;
-                                        const auto flow_id = flow_for_tuple(src_port, src, ep, active_route.generation);
+                                        const auto flow_id = flow_for_tuple(src_port, src, dst, dst_port, active_route.generation);
                                         const auto payload = std::span<const std::uint8_t>(u + 8, payload_len);
                                         if (data_sender && data_sender(flow_id, sequence, dst, dst_port, src_port, payload)) {
                                             count(active_route.generation, d_forwarded);
-                                            last_forwarded_host.store(ep.remote_ipv4_host, std::memory_order_release);
+                                            last_forwarded_host.store(dst, std::memory_order_release);
                                             last_forwarded_at_ms.store(steady_now_ms(), std::memory_order_release);
                                             bool first_for_flow = false;
                                             {
@@ -568,7 +569,7 @@ struct WintunTunnel::Impl {
                                                 WintunEvent ev;
                                                 ev.type = WintunEventType::FirstForwarded;
                                                 ev.flow = WintunFlowIdentity{active_route.generation, flow_id,
-                                                                            ep.remote_ipv4_host, ep.remote_port, src_port};
+                                                                            dst, dst_port, src_port};
                                                 event_fn(ev);
                                             }
                                         } else {

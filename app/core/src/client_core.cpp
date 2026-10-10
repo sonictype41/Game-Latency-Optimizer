@@ -666,7 +666,7 @@ void ClientCore::worker(ClientOptions options) {
             const auto rs = route_state.load(std::memory_order_acquire);
             const auto host = routed_gameplay_host.load(std::memory_order_acquire);
             const auto idle_ms = tunnel.forwarded_idle_ms(host);
-            current_game.gameplay_active = current_game.process_running && relay_route_is_current(rs, host, idle_ms);
+            current_game.gameplay_active = current_game.process_running && profile_relay_activity(rs, host, idle_ms);
             current_game.gameplay_host_ipv4 = current_game.gameplay_active ? host : 0;
             set_game_state(current_game);
             next_detector = now + (current_game.process_running ? std::chrono::milliseconds(500)
@@ -687,7 +687,7 @@ void ClientCore::worker(ClientOptions options) {
         const auto rs = route_state.load(std::memory_order_acquire);
         const auto routed_host = routed_gameplay_host.load(std::memory_order_acquire);
         const auto routed_idle_ms = tunnel.forwarded_idle_ms(routed_host);
-        const bool quality_active = relay_route_is_current(rs, routed_host, routed_idle_ms);
+        const bool quality_active = profile_relay_activity(rs, routed_host, routed_idle_ms);
         if (quality_active != quality_was_active) {
             quality_was_active = quality_active;
             relay_rtt.reset();
