@@ -138,6 +138,7 @@ struct WintunTunnel::Impl {
     std::vector<Ipv4Cidr> routes;
     std::vector<MIB_IPFORWARD_ROW2> route_rows;
     std::uint64_t route_generation{1};
+    std::atomic<std::uint16_t> game_port_min{49152},game_port_max{65535};
 
     std::uint64_t session_id{};
     SendControlFn control_sender;
@@ -349,8 +350,8 @@ struct WintunTunnel::Impl {
             error = "Wintun is not active";
             return false;
         }
-        if (requested.size() != 1) {
-            error = "GLO v0.3.15 requires exactly one destination /32 route";
+        if (requested.empty() || requested.size()>32) {
+            error = "Profile must contain 1 to 32 exact /32 routes";
             return false;
         }
         if (same_routes(routes, requested) && route_rows.size() == requested.size()) {
@@ -360,7 +361,7 @@ struct WintunTunnel::Impl {
         remove_routes_locked();
         for (const auto& cidr : requested) {
             if (cidr.prefix_length != 32) {
-                error = "GLO v0.3.15 safety policy permits /32 host routes only";
+                error = "Profile safety policy permits /32 host routes only";
                 remove_routes_locked();
                 return false;
             }
@@ -378,7 +379,7 @@ struct WintunTunnel::Impl {
             row.Protocol = static_cast<NL_ROUTE_PROTOCOL>(MIB_IPPROTO_NETMGMT);
 
             DWORD rc = CreateIpForwardEntry2(&row);
-            if (rc == ERROR_OBJECT_ALREADY_EXISTS) rc = SetIpForwardEntry2(&row);
+            // Never overwrite a route we do not own; cleanup must not delete another application's route.
             if (rc != NO_ERROR) {
                 error = "Could not install " + cidr_text(cidr) + ": " + winerr("Create/SetIpForwardEntry2 failed", rc);
                 remove_routes_locked();
@@ -520,7 +521,7 @@ struct WintunTunnel::Impl {
                             // profile. Do not turn unrelated UDP on the same IP into
                             // tunnel traffic. Gameplay may move among high ports on the
                             // same host, so every profile-valid port remains accepted.
-                            if (!roblox_gameplay_udp_port_allowed(dst_port)) {
+                            if (!(dst_port>=game_port_min.load(std::memory_order_relaxed) && dst_port<=game_port_max.load(std::memory_order_relaxed))) {
                                 count(active_route.generation, d_wrong_port);
                                 auto seen = non_game_notified_generation.load(std::memory_order_relaxed);
                                 if (seen != active_route.generation &&
@@ -725,31 +726,19 @@ void WintunTunnel::clear_routes() {
     route_active_ = false;
 }
 
-bool WintunTunnel::set_endpoint(const PreflightEndpoint& endpoint, std::string& error) {
-    if (!running_ || !impl_) {
-        error = "Wintun is not active";
-        return false;
-    }
-    if (endpoint.remote_ipv4_host == 0) {
-        error = "Exact endpoint requires a valid IPv4 host";
-        return false;
-    }
-    const auto exact = std::vector<Ipv4Cidr>{host_route(endpoint.remote_ipv4_host)};
-    if (!impl_->install_routes(exact, error)) {
-        route_active_ = false;
-        return false;
-    }
-    std::string verify;
-    if (!impl_->route_selected_for_host(endpoint.remote_ipv4_host, verify)) {
-        impl_->clear_routes();
-        route_active_ = false;
-        error = "Route installed but Windows did not select GLO: " + verify;
-        return false;
-    }
-    if (impl_->diag_enabled.load(std::memory_order_acquire))
-        impl_->reset_diag(impl_->routes_snapshot().generation);
-    route_active_ = true;
-    return true;
+bool WintunTunnel::set_profile_routes(const std::vector<std::uint32_t>& hosts,
+                                      std::uint16_t port_min,std::uint16_t port_max,std::string& error) {
+    if (!running_ || !impl_) { error="Wintun is not active";return false; }
+    if(hosts.empty()||hosts.size()>32||!port_min||port_min>port_max){error="Invalid profile route set";return false;}
+    std::vector<Ipv4Cidr> exact;exact.reserve(hosts.size());
+    for(auto ip:hosts) exact.push_back(host_route(ip));
+    impl_->game_port_min.store(port_min);impl_->game_port_max.store(port_max);
+    if(!impl_->install_routes(exact,error)){route_active_=false;return false;}
+    for(auto ip:hosts){std::string verify;if(!impl_->route_selected_for_host(ip,verify)){
+        impl_->clear_routes();route_active_=false;error="Windows did not select Wintun for "+ipv4_text(ip)+": "+verify;return false;
+    }}
+    if(impl_->diag_enabled.load())impl_->reset_diag(impl_->routes_snapshot().generation);
+    route_active_=true;return true;
 }
 
 void WintunTunnel::stop() {

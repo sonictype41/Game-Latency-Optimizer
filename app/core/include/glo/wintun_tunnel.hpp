@@ -1,7 +1,6 @@
 #pragma once
 
 #include "glo/protocol.hpp"
-#include "glo/preflight_policy.hpp"
 #include "glo/route_scope.hpp"
 
 #include <atomic>
@@ -11,6 +10,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace glo {
 
@@ -63,10 +63,8 @@ public:
              EventFn event_fn,
              std::string& error);
 
-    // v0.3.15 active client API: install exactly one verified /32 endpoint or clear it.
-    // The old live-flow guard / generic route list / polling-health helpers were
-    // removed because the preflight route worker is the only routing authority.
-    bool set_endpoint(const PreflightEndpoint& endpoint, std::string& error);
+    // Install a bounded set of verified game-profile IPv4 /32 routes, or clear them.
+    bool set_profile_routes(const std::vector<std::uint32_t>& hosts, std::uint16_t port_min, std::uint16_t port_max, std::string& error);
     void clear_routes();
     // Diagnostic counters are active only for the verification window.
     void set_diagnostics_enabled(bool enabled) noexcept;

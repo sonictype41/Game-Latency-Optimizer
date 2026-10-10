@@ -204,6 +204,9 @@ func main() {
 	egressGlobalQueueBytes := flag.Uint64("egress-global-queue-bytes", 64<<20, "node-wide cap for queued DATA_S2C bytes; 0 disables the global queue guard")
 	statsIntervalSec := flag.Uint("stats-interval-sec", 15, "engine stats/log interval in seconds; minimum 1")
 	allowPrivate := flag.Bool("allow-private-targets", false, "permit private/loopback targets only when they also match the destination allowlist (tests/private labs)")
+	targetPortMin := flag.Uint("target-port-min", 49152, "minimum allowed gameplay destination UDP port")
+	targetPortMax := flag.Uint("target-port-max", 65535, "maximum allowed gameplay destination UDP port")
+	profilePolicyFile := flag.String("profile-policy-file", "relay-profile-policy.json", "signed-management-authorized profile policy, dynamically reloaded when changed")
 	debug := flag.Bool("debug", false, "enable DEBUG logs")
 	var extraAllowed cidrList
 	clearDefaultAllowlist := flag.Bool("clear-default-allowlist", false, "start with an empty target allowlist instead of the compatibility Roblox defaults")
@@ -304,10 +307,10 @@ func main() {
 	if !*clearDefaultAllowlist {
 		// Compatibility profile only. The v0.5 engine itself is target-agnostic:
 		// operators can clear these defaults and supply policy by CLI/file.
-		_ = allowed.Set("128.116.0.0/17")
-		_ = allowed.Set("103.140.28.0/23")
-		_ = allowed.Set("141.193.3.0/24")
-		_ = allowed.Set("205.201.62.0/24")
+		_ = allowed.Set("128.116.46.33/32")
+		_ = allowed.Set("128.116.50.33/32")
+		_ = allowed.Set("128.116.54.33/32")
+		_ = allowed.Set("128.116.97.33/32")
 	}
 	allowed = append(allowed, extraAllowed...)
 	if *allowCIDRFile != "" {
@@ -315,6 +318,10 @@ func main() {
 			logger.error("SRV004", "allowlist file failed path=%q err=%v", *allowCIDRFile, err)
 			return
 		}
+	}
+	if *targetPortMin == 0 || *targetPortMax > 65535 || *targetPortMin > *targetPortMax {
+		logger.error("CONFIG001", "invalid destination port range")
+		return
 	}
 	if len(allowed) == 0 {
 		logger.error("SRV005", "empty destination allowlist; supply --allow-cidr/--allow-cidr-file or omit --clear-default-allowlist")
@@ -364,7 +371,7 @@ func main() {
 	srv.FlowOpenGlobalPPS = uint32(*flowOpenGlobalPPS)
 	srv.FlowOpenPerIPPPS = uint32(*flowOpenPerIPPPS)
 	srv.FlowOpenPerSessionPPS = uint32(*flowOpenPerSessionPPS)
-	srv.TargetPolicy = glocore.TargetPolicy{Allowed: []*net.IPNet(allowed), AllowPrivate: *allowPrivate}
+	srv.TargetPolicy = glocore.TargetPolicy{Allowed: []*net.IPNet(allowed), AllowPrivate: *allowPrivate, TargetPortMin: uint16(*targetPortMin), TargetPortMax: uint16(*targetPortMax)}
 	if *statsIntervalSec == 0 {
 		*statsIntervalSec = 1
 	}
@@ -644,6 +651,37 @@ func main() {
 		}()
 	}
 
+	// Management policy is written atomically by the signed Node Agent endpoint.
+	// Re-read at most every three seconds, on the main packet loop to avoid races.
+	var lastPolicyMod time.Time
+	var lastPolicySize int64 = -1
+	nextPolicyRead := time.Time{}
+	reloadProfilePolicy := func(now time.Time) {
+		if *profilePolicyFile == "" || now.Before(nextPolicyRead) {
+			return
+		}
+		nextPolicyRead = now.Add(3 * time.Second)
+		stat, err := os.Stat(*profilePolicyFile)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				logger.warnRate("POLICY002", time.Minute, "profile policy stat failed err=%v", err)
+			}
+			return
+		}
+		if stat.ModTime().Equal(lastPolicyMod) && stat.Size() == lastPolicySize {
+			return
+		}
+		rules, err := readProfileRules(*profilePolicyFile)
+		if err != nil {
+			logger.warnRate("POLICY003", time.Minute, "profile policy rejected err=%v", err)
+			return
+		}
+		srv.TargetPolicy = glocore.TargetPolicy{Rules: rules, AllowPrivate: false}
+		lastPolicyMod = stat.ModTime()
+		lastPolicySize = stat.Size()
+		logger.info("POLICY001", "published profile policy activated entries=%d", len(rules))
+	}
+	reloadProfilePolicy(time.Now())
 	maxWireDatagram := secure.MaxDatagram
 	if glocore.DataMaxDatagram > maxWireDatagram {
 		maxWireDatagram = glocore.DataMaxDatagram
@@ -659,6 +697,7 @@ func main() {
 			continue
 		}
 		now := time.Now()
+		reloadProfilePolicy(now)
 		if n > maxWireDatagram {
 			continue
 		}
@@ -694,6 +733,12 @@ func main() {
 			counters.tunnelRX.Add(1)
 
 			prefix := frame.Endpoint
+			if flow != nil && flow.EndpointMatches(prefix) {
+				target, tport, cport, e := glocore.DecodeFlowEndpoint(prefix)
+				if e != nil || !srv.TargetAllowed(target, tport, cport) {
+					continue
+				}
+			}
 			if flow == nil || !flow.EndpointMatches(prefix) {
 				target, tport, cport, e := glocore.DecodeFlowEndpoint(prefix)
 				if e != nil || !srv.TargetAllowed(target, tport, cport) {
@@ -725,6 +770,12 @@ func main() {
 					logger.info("SESS005", "event=gameplay_active session=%d active_gameplay=%d", frame.SessionID, srv.ActiveGameplaySessions())
 				}
 				startReverse(frame.SessionID, frame.FlowID, flow, flowConn)
+			}
+			if flow != nil && flow.EndpointMatches(prefix) {
+				target, tport, cport, e := glocore.DecodeFlowEndpoint(prefix)
+				if e != nil || !srv.TargetAllowed(target, tport, cport) {
+					continue
+				}
 			}
 			if flow == nil || !flow.EndpointMatches(prefix) {
 				continue

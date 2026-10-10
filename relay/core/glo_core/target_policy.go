@@ -5,9 +5,17 @@ import "net"
 // TargetPolicy is the authoritative userspace destination filter. Optional
 // upstream filtering may reject traffic earlier, but relay correctness and
 // security never depend on it.
+type TargetRule struct {
+	Network *net.IPNet
+	MinPort uint16
+	MaxPort uint16
+}
 type TargetPolicy struct {
-	Allowed      []*net.IPNet
-	AllowPrivate bool
+	Rules         []TargetRule
+	Allowed       []*net.IPNet
+	AllowPrivate  bool
+	TargetPortMin uint16
+	TargetPortMax uint16
 }
 
 func PublicIPv4(ip net.IP) bool {
@@ -37,7 +45,21 @@ func (p TargetPolicy) Allows(ip net.IP, targetPort, clientPort uint16) bool {
 	if ip.To4() == nil || targetPort == 0 || clientPort == 0 {
 		return false
 	}
+	if len(p.Rules) == 0 && p.TargetPortMin != 0 && targetPort < p.TargetPortMin {
+		return false
+	}
+	if len(p.Rules) == 0 && p.TargetPortMax != 0 && targetPort > p.TargetPortMax {
+		return false
+	}
 	if !p.AllowPrivate && !PublicIPv4(ip) {
+		return false
+	}
+	if len(p.Rules) > 0 {
+		for _, rule := range p.Rules {
+			if rule.Network != nil && rule.Network.Contains(ip) && targetPort >= rule.MinPort && targetPort <= rule.MaxPort {
+				return true
+			}
+		}
 		return false
 	}
 	for _, n := range p.Allowed {

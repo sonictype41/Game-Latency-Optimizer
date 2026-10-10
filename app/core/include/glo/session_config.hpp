@@ -15,6 +15,10 @@ struct SessionConfig {
     std::string relay_public_key;
     std::string relay_name;
     GameId game_id{default_game()};
+    std::string profile_id;
+    std::string gameplay_ipv4;
+    std::uint64_t profile_revision{1};
+    std::uint16_t port_min{49152}, port_max{65535};
     std::vector<std::uint8_t> grant;
     std::string timeout_message{"Session expired."};
 };

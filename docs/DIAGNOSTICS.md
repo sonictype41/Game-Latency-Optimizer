@@ -12,21 +12,17 @@ Diagnostic counters are collected **only during relay verification while Debug l
 | `RELAY` | Control transport handshake/heartbeat | `RELAY003`, `RELAY004` |
 | `WINTUN` | Adapter/session and bounded receive-path counters | `WINTUN002`, `WINTUN007` |
 | `PROC` | Game process detection/lifecycle | `PROC002` |
-| `HINT` | Optional game-local, validated early endpoint hint | `HINT002` |
-| `GATE` | WFP endpoint gate and candidate IP/port | `GATE003`, `GATE005` |
 | `ROUTE` | Exact Windows route, relay verification, fail-open | `ROUTE007`, `ROUTE008`, `ROUTE009`, `ROUTE016` |
 | `NET` | Local socket delivery of encapsulated gameplay | `NET005` (socket configuration), `NET006` (verification send summary) |
 | `QUAL`, `TELEM` | Quality statistics after relay lock | `QUAL001`, `TELEM001` |
 
-## New in OSS 0.0.3-beta: early hint and same-PID recovery
+## OSS 0.0.4-beta: profile-based early routes
 
-`HINT001` reports that an optional local hint watcher could not run or stopped; GLO falls back to WFP/Direct without treating this as a transport failure. `HINT002 event=endpoint_candidate source=game_log` means the local Roblox adapter recognized an allowlisted gameplay endpoint. `ROUTE007 source=game_hint` means an exact `/32` was installed based on that hint; `source=wfp_gate` indicates the original WFP discovery. **Neither means the game was routed.** Require `ROUTE008` and `ROUTE009` (matching reverse gameplay) as before. `ROUTE014 reason=game_session_started|game_session_ended` reports a reset in the same PID based on a local session boundary. Unrecognized game logs never authorize a broad route.
-
-Roblox logs can be written after Windows has already selected a UDP socket's source/interface. A pre-connect hint is a **best-effort** improvement only; a failure to capture packets remains possible. No new driver, injection or packet capture is used. Details: [ROUTING_LIFECYCLE.md](ROUTING_LIFECYCLE.md).
+Verified profile IPv4 /32 entries are installed before game UDP socket creation; no WFP endpoint gate or Roblox log watcher is used. The global Windows /32 route may affect other traffic to the same IP. See [ROUTING_LIFECYCLE.md](ROUTING_LIFECYCLE.md).
 
 ## Successful route
 
-`RELAY003 → WINTUN002 → GATE005 → ROUTE007 → ROUTE008 → ROUTE009` means the relay control handshake succeeded, endpoint was detected, the /32 route installed, **at least one** gameplay datagram was sent via the client socket, and a matching reverse flow was verified. Only then is a relay gameplay session marked active. The app showing Connected after control handshake does not mean packets are yet flowing.
+`RELAY003 → WINTUN002 → ROUTE007 → ROUTE008 → ROUTE009` means the relay control handshake succeeded, profile /32 routes were installed, **at least one** gameplay datagram was sent via the client socket, and a matching reverse flow was verified. Only then is a relay gameplay session marked active. The app showing Connected after control handshake does not mean packets are yet flowing.
 
 ## Timeout report (new in 0.0.2-beta-r1)
 
@@ -42,7 +38,6 @@ Example numbers are illustrative. All are **datagram counts for the currently in
 
 `stage` values and what they establish:
 
-- `no_wintun_packet`: no datagrams observed by GLO's Wintun receive loop during the observation window. **Does not prove Roblox sent none.** Check Windows route selection, WFP gate and game UDP retry behavior.
 - `no_packet_for_routed_host`: packets reached Wintun but not the selected /32 host. Check route selection and other host traffic.
 - `packet_filtered_or_malformed`: selected-host packets were observed, but none passed gameplay UDP validation. Check `non_udp`, `wrong_port`, `bad_ip`, `malformed_udp`.
 - `gameplay_send_failed`: at least one valid gameplay UDP datagram hit a local send failure with no successful forward. Check `NET006` `encode_failed`, `socket_failed` and numeric Winsock error.
@@ -72,6 +67,5 @@ g++ -std=c++20 -O2 -Iapp/core/include tools/benchmark_diagnostics.cpp -o glo_dia
 The benchmark compares 25 million synthetic atomic counter observations in the
 old always-count path and the new Debug-off/verification-only paths. It also
 compares bounded and unbounded file append costs. **It does not measure Windows
-WFP, Wintun, game latency, frame time, or actual GLO packets.** The file-append
 test is single-process and does not measure the Windows inter-process lock.
 For an official release, still build and test the native Windows client.

@@ -6,7 +6,7 @@ This guide is for an **independently operated** relay, not for joining the GLO O
 
 - An Ubuntu 24.04 (or compatible x86-64 Linux) VPS with a reachable public UDP port, a firewall you can configure and a monotonic clock synchronized via NTP.
 - Go >= the version declared in `go.mod` (1.23), or the toolchains documented in the build scripts. Run on a trusted machine; do not expose issuer secrets to the Internet.
-- A Windows 10/11 x64 client with administrator permission for WFP/Wintun, and the signed Wintun runtime packaged through the project's build instructions.
+- A Windows 10/11 x64 client with administrator permission for Wintun, and the signed Wintun runtime packaged through the project's build instructions.
 - Know that GLO **only** routes supported gameplay: self-hosting does not turn it into a general VPN, proxy or IP-hiding product.
 
 ## Step 1 — build the relay on Linux
@@ -93,7 +93,7 @@ Replace the uppercase placeholders with real values. `my-session.json` contains 
 1. Install/start the OSS Windows client. Use **Paste JSON config** or **Import JSON config from file** for your independent provider. Alternatively, when using the supported CLI, pass `--config` with the path to the JSON file.
 2. Confirm the relay endpoint, operator identity, game and any third-party/self-host warning.
 3. Start the supported game and enter gameplay; GLO installs only an exact game-server `/32` route after endpoint detection. Other applications and web traffic continue normally.
-4. Check `RELAY003` for control handshake, `GATE005`/`ROUTE007` for game detection/route, then `ROUTE008` and `ROUTE009` for successfully verified gameplay. See [DIAGNOSTICS.md](DIAGNOSTICS.md).
+4. Check `RELAY003` for control handshake, `ROUTE007` for profile /32 installation, then `ROUTE008` and `ROUTE009` for successfully verified gameplay. See [DIAGNOSTICS.md](DIAGNOSTICS.md).
 
 A successful control handshake is **not** proof of active gameplay. When the route verification fails, GLO removes the route and falls back to the normal connection; never disable that safety behavior simply to hide an error.
 

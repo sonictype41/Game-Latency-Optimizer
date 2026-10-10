@@ -57,7 +57,7 @@ enum class ClientErrorCode {
     RelayHandshakeSendFailed,
     RelayHandshakeTimeout,
     WintunInitFailed,
-    EndpointGateInitFailed,
+    ProfileRouteInitFailed,
     SessionAdmissionFailed,
     RelayKeyMissing,
     RelayKeyInvalid,
@@ -88,6 +88,10 @@ struct ClientOptions {
     std::string timeout_message{"Session expired."};
     std::string wintun_path{"wintun.dll"}; // internal install layout, never config data
     GameId game_id{default_game()};
+    std::string profile_id;
+    std::string gameplay_ipv4;
+    std::uint64_t profile_revision{1};
+    std::uint16_t port_min{49152}, port_max{65535};
     std::string game_exe_path; // privileged helper resolves this itself; not config data
     RoutingPolicy routing_policy{RoutingPolicy::RelayPreferred};
     unsigned force_handover_grace_ms{1800};
@@ -95,7 +99,7 @@ struct ClientOptions {
 };
 
 // UI-facing snapshot intentionally contains only product state plus telemetry.
-// Endpoint-gate state, candidate state, flow IDs and verification details live in
+// Profile route state, flow IDs and verification details live in
 // the event-driven route worker and optional dbg_log.txt, not in the gamer UI.
 struct ClientSnapshot {
     ConnectionState state{ConnectionState::Disconnected};

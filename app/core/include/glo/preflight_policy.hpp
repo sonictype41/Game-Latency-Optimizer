@@ -11,7 +11,7 @@ struct PreflightEndpoint {
     std::uint8_t protocol{};
 };
 
-// Pure validation shared by the Windows endpoint gate and portable tests. The
+// Pure validation used by the Wintun UDP packet classifier and portable tests. The
 // gate must never be allowed to widen the existing
 // Roblox relay scope or accidentally promote TCP/invalid tuples.
 bool preflight_endpoint_allowed(const PreflightEndpoint& endpoint) noexcept;

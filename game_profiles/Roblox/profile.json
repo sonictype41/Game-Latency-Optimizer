@@ -1,19 +1,7 @@
 {
-  "game": "Roblox",
-  "version": 2,
-  "status": "v0.5.3-relay-preferred-5th-gen-engine",
-  "processes": [
-    "RobloxPlayer*.exe",
-    "Windows10Universal.exe"
-  ],
-  "activity_detector": "Wintun forwarded gameplay activity + process lifecycle",
-  "remote_endpoint_source": "minimal EndpointGate using WFP ALE_AUTH_CONNECT scoped to Roblox AppId + UDP + gameplay port profile",
-  "gameplay_ipv4_allowlist": [
-    "128.116.0.0/17"
-  ],
-  "routing_scope": "exact learned /32 host only; multiple gameplay ports on the same host are valid",
-  "notes": "Roblox gameplay routing uses UDP remote ports 49152-65535 as a strong first-flow discriminator. UDP such as :3478 is excluded before endpoint gating. RelayPreferred installs one exact /32 from an eligible gameplay-port WFP event before releasing the gate, then accepts flow-scoped reverse proof for any same-host flow actually forwarded by Wintun. A route lock lasts for one gameplay cycle; after a process/server gameplay boundary old route evidence is cleared and WFP is re-armed. Client quality telemetry uses GLO tunnel RTT and gameplay sequence counters rather than calling relay RTT game-server ping.",
-  "gameplay_udp_remote_ports": [
-    "49152-65535"
-  ]
+ "game":"roblox", "profile_id":"roblox-sg", "revision":1,
+ "processes":["RobloxPlayerBeta.exe"], "protocol":"udp",
+ "gameplay_ipv4":["128.116.46.33/32","128.116.50.33/32","128.116.54.33/32","128.116.97.33/32"],
+ "port_min":49152, "port_max":65535,
+ "warning":"Host routes are system-wide. Non-game traffic to the same hosts can be interrupted."
 }

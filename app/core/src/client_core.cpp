@@ -6,11 +6,10 @@
 #include "glo/protocol.hpp"
 #include "glo/quality_metrics.hpp"
 #include "glo/game_detector.hpp"
-#include "glo/game_log_hint_watcher.hpp"
+#include "glo/profile_hosts.hpp"
 #include "glo/route_policy.hpp"
 #include "glo/route_scope.hpp"
-#include "glo/route_handover.hpp"
-#include "glo/endpoint_gate.hpp"
+
 #include "glo/route_events.hpp"
 #include "glo/client_log.hpp"
 #include "glo/wintun_tunnel.hpp"
@@ -280,7 +279,7 @@ void ClientCore::worker(ClientOptions options) {
 
     // The client has one routing policy: RelayPreferred.
     // --force-direct is a developer/baseline override and deliberately avoids
-    // relay control, Wintun and the endpoint gate entirely.
+    // relay control, Wintun and profile routes entirely.
     if (options.routing_policy == RoutingPolicy::DirectOnly) {
         log.info("CLI003", "event=direct_only enabled=true");
         GameDetector direct_detector(options.game_id);
@@ -386,7 +385,7 @@ void ClientCore::worker(ClientOptions options) {
     freeaddrinfo(result);
 
     // Timed blocking recv keeps Disconnect responsive. Routing itself never polls
-    // this timeout: endpoint-gate/Wintun/relay events are delivered into RouteEventQueue.
+    // this timeout: Wintun and relay events are delivered into RouteEventQueue.
     DWORD timeout = 100;
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == SOCKET_ERROR) {
         const int error_code = WSAGetLastError();
@@ -461,13 +460,12 @@ void ClientCore::worker(ClientOptions options) {
 
     publish(ConnectionState::Connecting, "Preparing network...");
     GameDetector detector(options.game_id);
-    auto endpoint_gate = make_endpoint_gate();
-    if (!endpoint_gate) {
-        closesocket(sock);
-        WSACleanup();
-        publish_connect_error(ClientErrorCode::EndpointGateInitFailed,
-                              "GLO - Endpoint gate unavailable",
-                              "GLO could not initialize the endpoint gate.");
+    std::vector<std::uint32_t> profile_hosts;
+    std::string profile_error;
+    const std::string ips=options.gameplay_ipv4.empty() ? bundled_profile_hosts(game_profile(options.game_id).key) : options.gameplay_ipv4;
+    if(!parse_profile_hosts(ips,profile_hosts,profile_error)||options.port_min==0||options.port_min>options.port_max){
+        closesocket(sock);WSACleanup();
+        publish_connect_error(ClientErrorCode::ProfileRouteInitFailed,"GLO - Invalid game profile",profile_error.empty()?"Invalid UDP profile policy":profile_error);
         return;
     }
     WintunTunnel tunnel;
@@ -550,403 +548,62 @@ void ClientCore::worker(ClientOptions options) {
         snapshot_.direct_reason = reason;
     };
 
+    // Pre-route a bounded allowlist immediately after the authenticated session starts.
+    // No WFP interception, no Roblox log tailing, no kernel callout. Route /32s are
+    // system-wide; applications reaching one of these same hosts may be affected.
+    std::string route_error;
+    if(!tunnel.set_profile_routes(profile_hosts,options.port_min,options.port_max,route_error)){
+        log.error("ROUTE004","event=profile_install_failed reason="+route_error);
+        tunnel.stop();closesocket(sock);WSACleanup();
+        publish_connect_error(ClientErrorCode::ProfileRouteInitFailed,"GLO - Routing failed",route_error);
+        return;
+    }
+    log.info("ROUTE007","event=profile_routes_installed count="+std::to_string(profile_hosts.size())+
+             " profile="+options.profile_id+" revision="+std::to_string(options.profile_revision));
     std::thread route_thread([&] {
-        RouteControlModel model;
-        model.reset(generation, RouteControlState::WaitingForGame);
-        route_state.store(model.state(), std::memory_order_release);
-
-        enum class GateMode { None, Initial, Handover };
-        GateMode gate_mode = GateMode::None;
-        std::wstring known_image_path;
-        std::uint32_t known_process_id = 0;
-        std::uint64_t route_cycle = 1;
-        std::optional<PreflightEndpoint> selected;
         ForwardedFlowSet forwarded;
+        bool direct_locked=false;
+        bool relay_locked=false;
         std::optional<Clock::time_point> verify_deadline;
-        bool route_diagnostics_armed = false; // only route thread changes this flag
-
-        auto stop_route_diagnostics = [&] {
-            verification_diagnostics.store(false, std::memory_order_release);
-            tunnel.set_diagnostics_enabled(false);
-            route_diagnostics_armed = false;
-        };
-
-        auto disarm_gate = [&] {
-            endpoint_gate->disarm();
-            gate_mode = GateMode::None;
-        };
-
-        auto arm_initial = [&](std::string& error) -> bool {
-            if (known_image_path.empty() || known_process_id == 0) {
-                error = "game process image unavailable";
-                return false;
-            }
-            disarm_gate();
-            const auto cycle = route_cycle;
-            const bool ok = endpoint_gate->arm_initial(
-                known_image_path, generation,
-                [&, cycle](std::uint64_t gen, const PreflightEndpoint& ep) {
-                    RouteEvent ev;
-                    ev.type = RouteEventType::EndpointCandidateSeen;
-                    ev.generation = gen;
-                    ev.route_cycle = cycle;
-                    ev.process_id = known_process_id;
-                    ev.endpoint = ep;
-                    route_events.push(std::move(ev));
-                }, error);
-            if (ok) {
-                gate_mode = GateMode::Initial;
-                log.info("GATE003", "event=endpoint_gate_armed mode=initial pid=" + std::to_string(known_process_id));
-            }
-            return ok;
-        };
-
-        auto arm_handover = [&](std::uint32_t host, std::string& error) -> bool {
-            if (known_image_path.empty() || known_process_id == 0 || host == 0) {
-                error = "handover gate requires game process image and routed host";
-                return false;
-            }
-            disarm_gate();
-            const auto cycle = route_cycle;
-            const bool ok = endpoint_gate->arm_handover(
-                known_image_path, generation, host,
-                [&, cycle](std::uint64_t gen, const PreflightEndpoint& ep) {
-                    RouteEvent ev;
-                    ev.type = RouteEventType::EndpointCandidateSeen;
-                    ev.generation = gen;
-                    ev.route_cycle = cycle;
-                    ev.process_id = known_process_id;
-                    ev.endpoint = ep;
-                    route_events.push(std::move(ev));
-                }, error);
-            if (ok) {
-                gate_mode = GateMode::Handover;
-                log.info("GATE010", "event=endpoint_gate_armed mode=handover routed_host=" + ipv4_text(host));
-            }
-            return ok;
-        };
-
-        auto fail_open = [&](const std::string& code, const std::string& reason,
-                             DirectReason direct_reason, bool degraded) {
-            if (code == "ROUTE016") {
-                if (log.enabled()) {
-                    // Snapshot and associated warnings share one 2-second gate,
-                    // rather than allowing three unlimited records per timeout.
-                    const auto d = route_diagnostics_armed ? tunnel.route_diagnostics() : WintunRouteDiagnostics{};
-                    const std::string stage = !route_diagnostics_armed || d.epoch == 0 ? "diagnostic_unavailable" :
-                        d.rx_total == 0 ? "no_wintun_packet" :
-                        d.rx_game_host == 0 ? "no_packet_for_routed_host" :
-                        d.rx_game_udp == 0 ? "packet_filtered_or_malformed" :
-                        (d.send_failed > 0 && d.forwarded == 0) ? "gameplay_send_failed" :
-                        (d.forwarded > 0 ? "awaiting_matching_reply" : "no_forwarded_gameplay");
-                    if (log.warn("ROUTE016", "event=fail_open reason=relay_verification_timeout stage=" + stage +
-                        " epoch=" + std::to_string(d.epoch) + " verify_ms=" +
-                        std::to_string(options.force_handover_grace_ms), std::chrono::seconds(2)) && route_diagnostics_armed) {
-                        log.info("WINTUN007", "event=verification_snapshot epoch=" + std::to_string(d.epoch) +
-                            " rx_total=" + std::to_string(d.rx_total) +
-                            " rx_game_host=" + std::to_string(d.rx_game_host) +
-                            " rx_game_udp=" + std::to_string(d.rx_game_udp) +
-                            " forwarded=" + std::to_string(d.forwarded) +
-                            " send_failed=" + std::to_string(d.send_failed) +
-                            " bad_ip=" + std::to_string(d.bad_ip) +
-                            " other_host=" + std::to_string(d.other_host) +
-                            " non_udp=" + std::to_string(d.non_udp) +
-                            " wrong_port=" + std::to_string(d.wrong_port) +
-                            " stale_epoch=" + std::to_string(d.stale_epoch) +
-                            " malformed_udp=" + std::to_string(d.malformed_udp) +
-                            " oversize=" + std::to_string(d.oversize));
-                        log.info("NET006", "event=gameplay_send_snapshot send_ok=" + std::to_string(net_send_ok.load()) +
-                            " encode_failed=" + std::to_string(net_encode_fail.load()) +
-                            " socket_failed=" + std::to_string(net_socket_fail.load()) +
-                            " last_wsa_error=" + std::to_string(net_last_wsa_error.load()));
-                    }
-                }
-            }
-            stop_route_diagnostics();
-            disarm_gate();
-            tunnel.clear_routes();
-            routed_gameplay_host.store(0, std::memory_order_release);
-            selected.reset();
-            forwarded.clear();
-            verify_deadline.reset();
-            model.lock_direct(generation);
-            route_state.store(model.state(), std::memory_order_release);
-            set_route_ui(ActiveRoute::Direct);
-            set_direct_reason(direct_reason);
-            if (code != "ROUTE016")
-                log.warn(code, "event=fail_open reason=" + reason, std::chrono::seconds(2));
-            publish(degraded ? ConnectionState::Degraded : ConnectionState::Direct, "In game - Direct");
-        };
-
-        auto begin_verify = [&](const PreflightEndpoint& ep, bool early_hint = false) -> bool {
-            // Early hints have no local UDP port yet. They are validated by the
-            // game adapter before reaching the routing core; never broaden /32.
-            const bool permitted = early_hint
-                ? game_endpoint_hint_allowed(options.game_id, ep)
-                : preflight_endpoint_allowed(ep);
-            if (!permitted) {
-                fail_open("GATE006", "candidate_outside_gameplay_profile", DirectReason::LocalFallback, true);
-                return false;
-            }
-            selected = ep;
-            stop_route_diagnostics();
-            net_send_ok=0; net_encode_fail=0; net_socket_fail=0; net_last_wsa_error=0;
-            route_diagnostics_armed = log.enabled();
-            tunnel.set_diagnostics_enabled(route_diagnostics_armed);
-            verification_diagnostics.store(route_diagnostics_armed, std::memory_order_release);
-            const PreflightEndpoint game_ep = ep;
-            std::string route_error;
-            const bool route_ok = tunnel.running() && tunnel.set_endpoint(game_ep, route_error);
-            // A log hint can prepare a route before the game connects; a WFP
-            // candidate is already a live flow, so route migration is best effort.
-            // Never leave a blocking gate installed after route preparation.
-            disarm_gate();
-            if (!route_ok || !model.verifying(generation)) {
-                stop_route_diagnostics();
-                tunnel.clear_routes();
-                routed_gameplay_host.store(0, std::memory_order_release);
-                model.lock_direct(generation);
-                route_state.store(model.state(), std::memory_order_release);
-                log.error("ROUTE004", "event=route_install_failed reason=" +
-                                      (route_error.empty() ? std::string("state transition rejected") : route_error));
-                set_route_ui(ActiveRoute::Direct);
-                set_direct_reason(DirectReason::LocalFallback);
-                publish(ConnectionState::Direct, "In game - Direct");
-                return false;
-            }
-            route_state.store(model.state(), std::memory_order_release);
-            routed_gameplay_host.store(ep.remote_ipv4_host, std::memory_order_release);
-            forwarded.clear();
-            verify_deadline = Clock::now() + std::chrono::milliseconds(options.force_handover_grace_ms);
-            log.info("ROUTE007", "event=exact_route_installed host=" + ipv4_text(game_ep.remote_ipv4_host) +
-                                 "/32 source=" + (early_hint ? std::string("game_hint") : std::string("wfp_gate")));
-            return true;
-        };
-
-        auto lock_relay = [&](const RouteFlowIdentity& reverse) {
-            if (model.state() != RouteControlState::RelayVerifying || !forwarded.matches(reverse)) return;
-            if (!model.lock_relay(generation)) return;
-            stop_route_diagnostics();
-            route_state.store(model.state(), std::memory_order_release);
-            verify_deadline.reset();
-            set_route_ui(ActiveRoute::Relay);
-            set_direct_reason(DirectReason::None);
-            log.info("ROUTE009", "event=relay_locked flow_id=" + std::to_string(reverse.flow_id) +
-                                  " host=" + ipv4_text(reverse.remote_ipv4_host));
-            publish(ConnectionState::Relayed, "In game - Relay");
-            std::string gate_error;
-            if (!arm_handover(reverse.remote_ipv4_host, gate_error)) {
-                // Routing remains valid, but without the gate a future endpoint
-                // could bootstrap Direct. Fail open now rather than silently lose
-                // the first-flow invariant.
-                fail_open("GATE009", gate_error.empty() ? "handover_gate_failed" : gate_error,
-                          DirectReason::LocalFallback, true);
-            }
-        };
-
-        auto reset_cycle = [&](const RouteEvent& ev) {
-            stop_route_diagnostics();
-            disarm_gate();
-            tunnel.clear_routes();
-            routed_gameplay_host.store(0, std::memory_order_release);
-            selected.reset();
-            forwarded.clear();
-            verify_deadline.reset();
-            model.next_gameplay_cycle(generation);
-            route_state.store(model.state(), std::memory_order_release);
-            if (++route_cycle == 0) route_cycle = 1;
-            set_route_ui(ActiveRoute::Direct);
-            set_direct_reason(DirectReason::None);
-            if (ev.process_id == 0 || ev.process_id != known_process_id) {
-                known_process_id = 0;
-                known_image_path.clear();
-            }
-            log.info("ROUTE014", "event=gameplay_cycle_reset reason=" +
-                                  (ev.detail.empty() ? std::string("process_lifecycle") : ev.detail));
-            // A match can end/start in the SAME game process. Process-resolved
-            // events only fire on PID changes, so rearm explicitly for this case.
-            if (known_process_id != 0 && !known_image_path.empty()) {
-                std::string error;
-                if (!arm_initial(error))
-                    fail_open("GATE002", error.empty() ? "cycle_rearm_failed" : error,
-                              DirectReason::LocalFallback, true);
-            }
-        };
-
-        for (;;) {
+        while(true){
             RouteEvent ev;
-            bool got = verify_deadline ? route_events.wait_pop_until(ev, *verify_deadline)
-                                       : route_events.wait_pop(ev);
-            if (!got) {
-                if (verify_deadline && Clock::now() >= *verify_deadline &&
-                    model.state() == RouteControlState::RelayVerifying) {
-                    fail_open("ROUTE016", "relay_verification_timeout", DirectReason::RelayUnavailable, false);
+            bool got=verify_deadline ? route_events.wait_pop_until(ev,*verify_deadline) : route_events.wait_pop(ev);
+            if(!got){
+                if(verify_deadline && Clock::now()>=*verify_deadline){
+                    log.warn("ROUTE016","event=fail_open reason=relay_verification_timeout",std::chrono::seconds(2));
+                    direct_locked=true;tunnel.clear_routes();routed_gameplay_host=0;
+                    route_state=RouteControlState::DirectLocked;set_route_ui(ActiveRoute::Direct);
+                    set_direct_reason(DirectReason::RelayUnavailable);publish(ConnectionState::Direct,"In game - Direct");
+                    verify_deadline.reset();
                     continue;
                 }
                 break;
             }
-            if (ev.type == RouteEventType::Disconnect) break;
-            if (ev.generation != 0 && ev.generation != generation) continue;
-
-            switch (ev.type) {
-                case RouteEventType::ProcessImageResolved: {
-                    if (ev.image_path.empty() || ev.process_id == 0) {
-                        fail_open("GATE001", "process_image_unavailable", DirectReason::LocalFallback, true);
-                        break;
-                    }
-                    known_image_path = ev.image_path;
-                    known_process_id = ev.process_id;
-                    if (model.state() == RouteControlState::WaitingForGame) {
-                        std::string error;
-                        if (!arm_initial(error))
-                            fail_open("GATE002", error.empty() ? "endpoint_gate_install_failed" : error,
-                                      DirectReason::LocalFallback, true);
-                    }
-                    break;
-                }
-                case RouteEventType::GameplaySessionStarted:
-                case RouteEventType::GameplaySessionEnded: {
-                    // Optional per-game lifecycle evidence; independent of PID.
-                    // Each event is emitted only once by an incremental log tailer.
-                    if (model.state() != RouteControlState::WaitingForGame &&
-                        known_process_id != 0 && !known_image_path.empty()) {
-                        ev.process_id = known_process_id;
-                        ev.detail = ev.type == RouteEventType::GameplaySessionStarted
-                            ? "game_session_started" : "game_session_ended";
-                        reset_cycle(ev);
-                    }
-                    break;
-                }
-                case RouteEventType::EarlyEndpointHintSeen: {
-                    if (!ev.endpoint || model.state() != RouteControlState::WaitingForGame ||
-                        known_process_id == 0 || known_image_path.empty()) break;
-                    // The adapter validates the endpoint, and generic core
-                    // performs its own check before touching the routing table.
-                    log.info("HINT002", "event=endpoint_candidate source=game_log host=" +
-                                         ipv4_text(ev.endpoint->remote_ipv4_host));
-                    begin_verify(*ev.endpoint, true);
-                    break;
-                }
-                case RouteEventType::EndpointCandidateSeen: {
-                    if (!ev.endpoint || ev.route_cycle != route_cycle || !endpoint_gate->armed()) break;
-                    const auto ep = *ev.endpoint;
-                    if (!preflight_endpoint_allowed(ep)) break;
-                    if (model.state() == RouteControlState::WaitingForGame && gate_mode == GateMode::Initial) {
-                        log.info("GATE005", "event=endpoint_candidate remote=" + ipv4_text(ep.remote_ipv4_host) + ':' +
-                                             std::to_string(ep.remote_port));
-                        begin_verify(ep);
-                    } else if (model.state() == RouteControlState::RelayLocked && gate_mode == GateMode::Handover &&
-                               selected && should_endpoint_handover(model.state(), selected->remote_ipv4_host,
-                                                                    ep.remote_ipv4_host)) {
-                        const auto old_host = selected->remote_ipv4_host;
-                        log.info("ROUTE021", "event=endpoint_handover old_host=" + ipv4_text(old_host) +
-                                              " new_host=" + ipv4_text(ep.remote_ipv4_host));
-                        if (!model.next_gameplay_cycle(generation)) {
-                            fail_open("ROUTE022", "handover_state_transition_rejected", DirectReason::LocalFallback, true);
-                            break;
-                        }
-                        if (++route_cycle == 0) route_cycle = 1;
-                        route_state.store(model.state(), std::memory_order_release);
-                        forwarded.clear();
-                        verify_deadline.reset();
-                        set_route_ui(ActiveRoute::Direct);
-                        begin_verify(ep);
-                    }
-                    break;
-                }
-                case RouteEventType::GameplayCycleEnded:
-                    reset_cycle(ev);
-                    break;
-                case RouteEventType::FirstForwarded:
-                    if (model.state() == RouteControlState::RelayVerifying && ev.flow && ev.flow->valid() && selected &&
-                        ev.flow->remote_ipv4_host == selected->remote_ipv4_host &&
-                        roblox_gameplay_udp_port_allowed(ev.flow->remote_port)) {
-                        forwarded.remember(*ev.flow);
-                        verify_deadline = Clock::now() + std::chrono::milliseconds(options.force_handover_grace_ms);
-                        log.info("ROUTE008", "event=forwarded_flow flow_id=" + std::to_string(ev.flow->flow_id));
-                    }
-                    break;
-                case RouteEventType::RelayReverseConfirmed:
-                    if (ev.flow && ev.flow->valid() && selected &&
-                        ev.flow->remote_ipv4_host == selected->remote_ipv4_host)
-                        lock_relay(*ev.flow);
-                    break;
-                case RouteEventType::TunnelNonGameTrafficDropped:
-                    log.warn("WINTUN006", "event=non_game_packet_dropped protocol=" + std::to_string(ev.ip_protocol),
-                             std::chrono::seconds(10));
-                    break;
-                case RouteEventType::TunnelStopped:
-                    if (model.state() != RouteControlState::DirectLocked)
-                        fail_open("WINTUN005", "packet_thread_stopped", DirectReason::LocalFallback, true);
-                    break;
-                case RouteEventType::RelayRejected: {
-                    if (!forwarded.contains(ev.relay_flow_id)) break;
-                    DirectReason why = DirectReason::RelayUnavailable;
-                    if (static_cast<protocol::RelayRejectReason>(ev.relay_reject_reason) == protocol::RelayRejectReason::Capacity)
-                        why = DirectReason::CapacityFull;
-                    else if (static_cast<protocol::RelayRejectReason>(ev.relay_reject_reason) == protocol::RelayRejectReason::Maintenance)
-                        why = DirectReason::Maintenance;
-                    fail_open("ROUTE026", "relay_rejected", why, false);
-                    break;
-                }
-                case RouteEventType::RelayUnavailable:
-                    if (model.state() != RouteControlState::DirectLocked)
-                        fail_open("RELAY004", "control_heartbeat_lost", DirectReason::RelayDegraded, true);
-                    break;
-                case RouteEventType::Disconnect:
-                    break;
+            if(ev.type==RouteEventType::Disconnect)break;
+            if(ev.generation!=0 && ev.generation!=generation)continue;
+            if(direct_locked)continue;
+            if(ev.type==RouteEventType::FirstForwarded && ev.flow && ev.flow->valid()){
+                forwarded.remember(*ev.flow);
+                routed_gameplay_host.store(ev.flow->remote_ipv4_host);
+                if(!relay_locked){route_state=RouteControlState::RelayVerifying;
+                    verify_deadline=Clock::now()+std::chrono::milliseconds(options.force_handover_grace_ms);}
+                log.info("ROUTE008","event=forwarded_flow flow_id="+std::to_string(ev.flow->flow_id));
+            }else if(ev.type==RouteEventType::RelayReverseConfirmed && ev.flow && forwarded.matches(*ev.flow)){
+                if(!relay_locked){relay_locked=true;route_state=RouteControlState::RelayLocked;
+                    verify_deadline.reset();set_route_ui(ActiveRoute::Relay);set_direct_reason(DirectReason::None);
+                    log.info("ROUTE009","event=relay_locked flow_id="+std::to_string(ev.flow->flow_id));
+                    publish(ConnectionState::Relayed,"In game - Relay");}
+                routed_gameplay_host.store(ev.flow->remote_ipv4_host);
+            }else if(ev.type==RouteEventType::TunnelNonGameTrafficDropped){
+                log.warn("WINTUN006","event=non_game_packet_dropped protocol="+std::to_string(ev.ip_protocol),std::chrono::seconds(10));
+            }else if(ev.type==RouteEventType::RelayUnavailable || ev.type==RouteEventType::TunnelStopped || ev.type==RouteEventType::RelayRejected){
+                direct_locked=true;tunnel.clear_routes();routed_gameplay_host=0;route_state=RouteControlState::DirectLocked;
+                set_route_ui(ActiveRoute::Direct);set_direct_reason(DirectReason::RelayUnavailable);
+                log.warn("ROUTE026","event=fail_open reason=relay_unavailable",std::chrono::seconds(2));
+                publish(ConnectionState::Direct,"In game - Direct");verify_deadline.reset();
             }
         }
-        stop_route_diagnostics();
-        endpoint_gate->disarm();
     });
-
-    // Optional game adapter: watches local Roblox log output only. The common
-    // routing core neither parses RbxTransport nor handles arbitrary game logs.
-    // No packet capture, driver hooks, process injection or network requests.
-    std::atomic_bool game_hints_stop{false};
-    std::thread game_hints_thread;
-    if (options.game_id == GameId::Roblox && options.game_exe_path.empty()) {
-        try {
-            game_hints_thread = std::thread([&] {
-                try {
-                    GameLogHintWatcher watcher(options.game_id);
-                    watcher.run(game_hints_stop, [&](const GameSessionHint& hint) {
-                        RouteEvent event;
-                        event.generation = generation;
-                        switch (hint.kind) {
-                            case GameHintKind::SessionStarted:
-                                event.type = RouteEventType::GameplaySessionStarted;
-                                break;
-                            case GameHintKind::SessionEnded:
-                                event.type = RouteEventType::GameplaySessionEnded;
-                                break;
-                            case GameHintKind::EndpointCandidate:
-                                event.type = RouteEventType::EarlyEndpointHintSeen;
-                                event.endpoint = hint.endpoint;
-                                break;
-                            default: return;
-                        }
-                        route_events.push(std::move(event));
-                    });
-                } catch (...) {
-                    // Optional log adapter must never crash or disconnect GLO.
-                    log.warn("HINT001", "event=local_hint_watcher_stopped", std::chrono::seconds(30));
-                }
-            });
-        } catch (...) {
-            log.warn("HINT001", "event=local_hint_watcher_unavailable", std::chrono::seconds(30));
-        }
-    }
-
-    if (!options.game_exe_path.empty()) {
-        RouteEvent ev;
-        ev.type = RouteEventType::ProcessImageResolved;
-        ev.generation = generation;
-        ev.process_id = 1; // developer override is explicitly trusted by CLI policy
-        ev.image_path = utf8_to_wide(options.game_exe_path);
-        route_events.push(std::move(ev));
-    }
 
     struct LossPoint {
         Clock::time_point at{};
@@ -1015,40 +672,8 @@ void ClientCore::worker(ClientOptions options) {
             next_detector = now + (current_game.process_running ? std::chrono::milliseconds(500)
                                                                  : std::chrono::milliseconds(1000));
 
-            const bool stopped = previous_process_running && !current_game.process_running;
-            const bool changed = previous_process_running && current_game.process_running &&
-                                 previous_primary_pid != 0 && current_game.primary_pid != 0 &&
-                                 previous_primary_pid != current_game.primary_pid;
-            if (stopped || changed) {
-                RouteEvent ended;
-                ended.type = RouteEventType::GameplayCycleEnded;
-                ended.generation = generation;
-                ended.process_id = changed ? current_game.primary_pid : 0;
-                ended.detail = changed ? "process_changed" : "process_stopped";
-                route_events.push(std::move(ended));
-                process_image_event_pid = 0;
-            }
-            previous_process_running = current_game.process_running;
-            previous_primary_pid = current_game.primary_pid;
-
-            if (current_game.process_running && current_game.primary_pid != 0 &&
-                current_game.primary_pid != process_image_event_pid && options.game_exe_path.empty()) {
-                std::wstring image_path;
-                std::string image_error;
-                if (query_process_image_path(current_game.primary_pid, image_path, image_error)) {
-                    process_image_event_pid = current_game.primary_pid;
-                    RouteEvent ev;
-                    ev.type = RouteEventType::ProcessImageResolved;
-                    ev.generation = generation;
-                    ev.process_id = current_game.primary_pid;
-                    ev.image_path = std::move(image_path);
-                    route_events.push(std::move(ev));
-                    log.info("PROC002", "event=image_resolved pid=" + std::to_string(current_game.primary_pid));
-                } else {
-                    log.warn("PROC003", "event=image_query_failed reason=" + image_error, std::chrono::seconds(5));
-                }
-            }
-
+            previous_process_running=current_game.process_running;
+            previous_primary_pid=current_game.primary_pid;
             if (current_game.gameplay_active) {
                 set_route_ui(ActiveRoute::Relay);
                 publish(ConnectionState::Relayed, "In game - Relay");
@@ -1217,15 +842,12 @@ void ClientCore::worker(ClientOptions options) {
         }
     }
 
-    game_hints_stop.store(true, std::memory_order_release);
-    if (game_hints_thread.joinable()) game_hints_thread.join();
     RouteEvent disconnect;
     disconnect.type = RouteEventType::Disconnect;
     disconnect.generation = generation;
     route_events.push(std::move(disconnect));
     route_events.close();
     if (route_thread.joinable()) route_thread.join();
-    endpoint_gate->disarm();
     tunnel.stop();
 
     protocol::Packet bye;

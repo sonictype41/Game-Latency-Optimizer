@@ -24,11 +24,6 @@ enum class RouteControlState {
 
 enum class RouteEventType {
     ProcessImageResolved,
-    EndpointCandidateSeen,
-    EarlyEndpointHintSeen,
-    GameplaySessionStarted,
-    GameplaySessionEnded,
-    GameplayCycleEnded,
     FirstForwarded,
     RelayReverseConfirmed,
     TunnelNonGameTrafficDropped,
@@ -104,8 +99,7 @@ struct RouteEvent {
     std::uint32_t relay_flow_id{0};
 };
 
-// Single-consumer queue for routing-control events. Producers are the endpoint
-// gate, Wintun packet thread, process lifecycle watcher, and relay receive path.
+// Single-consumer queue for routing-control events. Producers are the Wintun packet thread and relay receive path.
 class RouteEventQueue {
 public:
     void push(RouteEvent event) {

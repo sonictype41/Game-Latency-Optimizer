@@ -17,7 +17,7 @@ struct RobloxState {
     std::string detail;
 };
 
-// Process-only detector. Network/gameplay state belongs to EndpointGate + Wintun.
+// Process-only detector. Network/gameplay state is determined by profile routes and Wintun forwarding.
 class RobloxDetector {
 public:
     RobloxDetector() = default;

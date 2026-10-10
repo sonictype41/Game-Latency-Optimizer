@@ -1,3 +1,18 @@
+# Changelog — public OSS releases only
+
+## [0.0.4-beta]
+
+### Added
+- Profile-driven, bounded exact IPv4 host pre-routing through Wintun for UDP games; Roblox SG bundled profile.
+- Accept provider/self-host gameplay profile identifiers, revisions, host sets and UDP port policy in strict session schema 2.
+- Removed the previous WFP BLOCK endpoint gate and Roblox log hint watcher from the OSS client and build.
+- Updated relay-side destination/port policy and diagnostics; kept plaintext gameplay datagrams.
+### Fixed
+- Removed the old first-UDP gate timing failure path; this change requires live Windows validation.
+
+### Known limitations
+- **Limitations:** Windows host routes apply system-wide; third-party traffic to those hosts can be affected. Gameplay-only isolation is not guaranteed by Windows route tables. Windows live validation required.
+
 # Changelog
 
 All notable public changes to GLO OSS are documented here.

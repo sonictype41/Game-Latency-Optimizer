@@ -134,7 +134,12 @@ func run(args []string) error {
 			Game           string `json:"game"`
 			Grant          string `json:"grant"`
 			TimeoutMessage string `json:"timeout_message"`
-		}{1, *relay, hex.EncodeToString(relayRaw), *game, hex.EncodeToString(signed), "Session expired. Generate a new config."}
+            ProfileID string `json:"profile_id"`
+            ProfileRevision int `json:"profile_revision"`
+            GameplayIPv4 string `json:"gameplay_ipv4"`
+            PortMin int `json:"port_min"`
+            PortMax int `json:"port_max"`
+		}{2, *relay, hex.EncodeToString(relayRaw), *game, hex.EncodeToString(signed), "Session expired. Generate a new config.","roblox-sg",1,"128.116.46.33/32,128.116.50.33/32,128.116.54.33/32,128.116.97.33/32",49152,65535}
 		data, err := json.MarshalIndent(config, "", "  ")
 		if err != nil {
 			return err

@@ -51,11 +51,15 @@ func TestOfflineIssueAndValidate(t *testing.T) {
 		Schema         int    `json:"schema"`
 		RelayPublicKey string `json:"relay_public_key"`
 		Grant          string `json:"grant"`
+		ProfileID      string `json:"profile_id"`
+		GameplayIPv4   string `json:"gameplay_ipv4"`
+		PortMin        int    `json:"port_min"`
+		PortMax        int    `json:"port_max"`
 	}
 	if err := json.Unmarshal(raw, &c); err != nil {
 		t.Fatal(err)
 	}
-	if c.Schema != 1 || c.RelayPublicKey != relayHex {
+	if c.Schema != 2 || c.RelayPublicKey != relayHex || c.ProfileID != "roblox-sg" || c.GameplayIPv4 == "" || c.PortMin != 49152 || c.PortMax != 65535 {
 		t.Fatal("incorrect portable config")
 	}
 	ticket, err := hex.DecodeString(c.Grant)

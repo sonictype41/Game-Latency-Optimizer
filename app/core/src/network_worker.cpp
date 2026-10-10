@@ -301,12 +301,14 @@ int worker_main(const std::wstring& pipe_name,const std::string& secret){
     std::string line;
     while(read_line(pipe,line)){
         const auto f=split_tabs(line);if(f.empty())continue;
-        if(f[0]=="CONNECT"&&f.size()>=10){
+        if(f[0]=="CONNECT"&&f.size()==15){
             int game=0,direct=0,debug=0;unsigned grace=0,port=0;
-            std::string host,pin,timeout;std::vector<std::uint8_t> grant;
+            std::string host,pin,timeout,profile_id,profile_ips;std::vector<std::uint8_t> grant;unsigned lo=0,hi=0;std::uint64_t revision=0;
             if(!parse_int(f[1],game)||!parse_int(f[2],direct)||!parse_int(f[3],debug)||!parse_int(f[4],grace)||
                !hex_decode_string(f[5],host)||!parse_int(f[6],port)||!hex_decode_string(f[7],pin)||
-               !hex_decode(f[8],grant)||!hex_decode_string(f[9],timeout))continue;
+               !hex_decode(f[8],grant)||!hex_decode_string(f[9],timeout)||
+               !hex_decode_string(f[10],profile_id)||!hex_decode_string(f[11],profile_ips)||
+               !parse_int(f[12],revision)||!parse_int(f[13],lo)||!parse_int(f[14],hi))continue;
             if(game!=static_cast<int>(GameId::Roblox)){rt.send("WORKER_ERROR\t"+hex_encode("Unsupported game profile"));continue;}
             ClientOptions opt;opt.game_id=GameId::Roblox;opt.routing_policy=direct?RoutingPolicy::DirectOnly:RoutingPolicy::RelayPreferred;
             opt.dbg_log=debug!=0;opt.force_handover_grace_ms=std::clamp(grace,500u,3000u);opt.wintun_path=default_wintun_path();
@@ -317,6 +319,9 @@ int worker_main(const std::wstring& pipe_name,const std::string& secret){
                 if(host.empty()||port==0||port>65535||pin.empty()||grant.empty()){rt.send("WORKER_ERROR\t"+hex_encode("Invalid session config"));continue;}
                 opt.relay_host=std::move(host);opt.relay_port=static_cast<std::uint16_t>(port);opt.relay_public_key=std::move(pin);
                 opt.session_grant=std::move(grant);opt.timeout_message=std::move(timeout);
+                if(profile_id.empty()||revision==0||lo==0||hi>65535||lo>hi){rt.send("WORKER_ERROR\t"+hex_encode("Invalid profile"));continue;}
+                opt.profile_id=std::move(profile_id);opt.gameplay_ipv4=std::move(profile_ips);opt.profile_revision=revision;
+                opt.port_min=static_cast<std::uint16_t>(lo);opt.port_max=static_cast<std::uint16_t>(hi);
             }
             rt.core.connect_async(opt,[&rt](const ClientSnapshot& s){rt.send(serialize_state(s));});
         }else if(f[0]=="DEBUG"&&f.size()>=2){int on=0;if(parse_int(f[1],on))rt.core.set_debug_logging(on!=0);
@@ -423,7 +428,9 @@ bool NetworkWorkerClient::connect_async(const ClientOptions& options,UpdateCallb
     }
     impl_->stopping.store(false,std::memory_order_release);
     {std::scoped_lock lock(impl_->mu);impl_->callback=std::move(cb);impl_->snapshot=ClientSnapshot{};impl_->snapshot.state=ConnectionState::Connecting;impl_->snapshot.message="Starting network worker...";}
-    const std::string command="CONNECT\t"+std::to_string(static_cast<int>(options.game_id))+"\t0\t"+(options.dbg_log?"1":"0")+"\t"+std::to_string(std::clamp(options.force_handover_grace_ms,500u,3000u))+"\t"+hex_encode(options.relay_host)+"\t"+std::to_string(options.relay_port)+"\t"+hex_encode(options.relay_public_key)+"\t"+hex_encode(options.session_grant)+"\t"+hex_encode(options.timeout_message);
+    const std::string command="CONNECT\t"+std::to_string(static_cast<int>(options.game_id))+"\t0\t"+(options.dbg_log?"1":"0")+"\t"+std::to_string(std::clamp(options.force_handover_grace_ms,500u,3000u))+"\t"+hex_encode(options.relay_host)+"\t"+std::to_string(options.relay_port)+"\t"+hex_encode(options.relay_public_key)+"\t"+hex_encode(options.session_grant)+"\t"+hex_encode(options.timeout_message)+"\t"+hex_encode(options.profile_id)+"\t"+
+        hex_encode(options.gameplay_ipv4)+"\t"+std::to_string(options.profile_revision)+"\t"+
+        std::to_string(options.port_min)+"\t"+std::to_string(options.port_max);
     try{
         impl_->starter_running.store(true,std::memory_order_release);
         impl_->starter=std::thread([impl=impl_.get(),command]{

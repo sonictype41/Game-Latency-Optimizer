@@ -1,5 +1,5 @@
 {
-  "version": "0.13.0",
+  "version": "0.0.4",
   "edition": "generic",
   "args": {
     "key-file": {
@@ -252,6 +252,25 @@
     "event-journal": {
       "enabled": true,
       "default": "",
+      "allow_zero": false
+    },
+    "target-port-min": {
+      "enabled": true,
+      "default": "49152",
+      "allow_zero": false,
+      "min": 1,
+      "max": 65535
+    },
+    "target-port-max": {
+      "enabled": true,
+      "default": "65535",
+      "allow_zero": false,
+      "min": 1,
+      "max": 65535
+    },
+    "profile-policy-file": {
+      "enabled": true,
+      "default": "relay-profile-policy.json",
       "allow_zero": false
     }
   }

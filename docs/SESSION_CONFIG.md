@@ -6,13 +6,17 @@ GLO has **two entry points into one secure session**: (1) a provider `glo://` ha
 
 | Field | Required | Meaning |
 |---|---|---|
-| `schema` | Yes | Integer `1` |
+| `schema` | Yes | Integer `2` (strict; no legacy schema) |
 | `relay` | Yes | Reachable relay host and UDP port (`host:port`) |
 | `relay_public_key` | Yes | Relay identity X25519 public key as **64 hex characters** |
 | `game` | Yes | Supported game profile key (initially `roblox`) |
 | `grant` | Yes | One-time signed GSK2 session ticket as **152 bytes / 304 hex characters** |
 | `relay_name` | No | Operator-supplied display name, maximum 96 chars |
 | `timeout_message` | No | Text shown for session expiry, maximum 512 chars |
+| `profile_id` | Yes | Provider or bundled game-profile identifier |
+| `profile_revision` | Yes | Positive profile revision |
+| `gameplay_ipv4` | Yes | CSV of 1–32 exact public IPv4 `/32` destinations |
+| `port_min` / `port_max` | Yes | Allowed gameplay destination UDP port range |
 
 Parser rejects duplicate keys, unknown keys, malformed types, missing fields and invalid grant length/encoding. See `app/core/src/session_config.cpp` for authoritative validation; do not silently add keys to configs or assume a web-session token is a valid grant.
 

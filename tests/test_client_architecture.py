@@ -28,12 +28,15 @@ class V0122ClientArchitecture(unittest.TestCase):
 
     def test_config_contract_forbids_filesystem_and_auth_fields(self):
         src=(ROOT/'app/core/src/session_config.cpp').read_text(encoding='utf-8')
-        self.assertIn('allowed={"schema","relay","relay_name","relay_public_key","game","grant","timeout_message"}',src)
+        self.assertIn('allowed={"schema","relay","relay_name","relay_public_key","game","grant","timeout_message","profile_id","profile_revision","gameplay_ipv4","port_min","port_max"}',src)
         self.assertIn('Unsupported config field',src)
 
-    def test_endpoint_gate_is_generic_in_core(self):
-        core=(ROOT/'app/core/src/client_core.cpp').read_text(encoding='utf-8'); hdr=(ROOT/'app/core/include/glo/endpoint_gate.hpp').read_text(encoding='utf-8')
-        self.assertIn('EndpointGate',hdr); self.assertIn('make_endpoint_gate()',core); self.assertNotIn('WfpEndpointGate',core)
+    def test_profile_router_has_no_wfp_gate(self):
+        core=(ROOT/'app/core/src/client_core.cpp').read_text(encoding='utf-8')
+        self.assertIn('set_profile_routes',core)
+        self.assertNotIn('make_endpoint_gate',core)
+        self.assertFalse((ROOT/'app/core/src/wfp_endpoint_gate.cpp').exists())
+
 
     def test_session_clock_comes_from_secure_transport(self):
         core=(ROOT/'app/core/src/client_core.cpp').read_text(encoding='utf-8'); hdr=(ROOT/'secure_transport/include/glo/secure_transport.hpp').read_text(encoding='utf-8')

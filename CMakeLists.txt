@@ -32,13 +32,6 @@ add_executable(glo_route_scope_test tests/route_scope_test.cpp)
 target_link_libraries(glo_route_scope_test PRIVATE glo_route_scope)
 add_test(NAME glo_route_scope_test COMMAND glo_route_scope_test)
 
-add_library(glo_game_session_hints STATIC app/core/src/game_session_hints.cpp)
-target_include_directories(glo_game_session_hints PUBLIC app/core/include)
-target_link_libraries(glo_game_session_hints PUBLIC glo_route_scope)
-add_executable(glo_game_session_hints_test tests/game_session_hints_test.cpp)
-target_link_libraries(glo_game_session_hints_test PRIVATE glo_game_session_hints)
-add_test(NAME glo_game_session_hints_test COMMAND glo_game_session_hints_test)
-
 add_library(glo_preflight_policy STATIC app/core/src/preflight_policy.cpp)
 target_include_directories(glo_preflight_policy PUBLIC app/core/include)
 target_link_libraries(glo_preflight_policy PUBLIC glo_route_scope)
@@ -54,8 +47,14 @@ add_executable(glo_game_profile_test tests/game_profile_test.cpp)
 target_include_directories(glo_game_profile_test PRIVATE app/core/include)
 add_test(NAME glo_game_profile_test COMMAND glo_game_profile_test)
 
+add_library(glo_profile_hosts STATIC app/core/src/profile_hosts.cpp)
+target_include_directories(glo_profile_hosts PUBLIC app/core/include)
+add_executable(glo_profile_hosts_test tests/profile_hosts_test.cpp)
+target_link_libraries(glo_profile_hosts_test PRIVATE glo_profile_hosts)
+add_test(NAME glo_profile_hosts_test COMMAND glo_profile_hosts_test)
 add_library(glo_session_config STATIC app/core/src/session_config.cpp)
 target_include_directories(glo_session_config PUBLIC app/core/include)
+target_link_libraries(glo_session_config PUBLIC glo_profile_hosts)
 target_compile_definitions(glo_session_config PUBLIC GLO_VERSION="${GLO_VERSION}")
 add_executable(glo_session_config_test tests/session_config_test.cpp)
 target_link_libraries(glo_session_config_test PRIVATE glo_session_config)
@@ -69,9 +68,6 @@ add_executable(glo_route_events_test tests/route_events_test.cpp)
 target_include_directories(glo_route_events_test PRIVATE app/core/include)
 add_test(NAME glo_route_events_test COMMAND glo_route_events_test)
 
-add_executable(glo_route_handover_test tests/route_handover_test.cpp)
-target_include_directories(glo_route_handover_test PRIVATE app/core/include)
-add_test(NAME glo_route_handover_test COMMAND glo_route_handover_test)
 
 add_executable(glo_log_rotation_test tests/log_rotation_test.cpp)
 target_include_directories(glo_log_rotation_test PRIVATE app/core/include)
@@ -96,9 +92,8 @@ if(WIN32)
         app/core/src/client_core.cpp
         app/core/src/roblox_detector.cpp
         app/core/src/game_detector.cpp
-        app/core/src/game_log_hint_watcher.cpp
+        app/core/src/profile_hosts.cpp
         app/core/src/wintun_tunnel.cpp
-        app/core/src/wfp_endpoint_gate.cpp
         app/core/src/client_log.cpp
         app/core/src/network_worker.cpp
         app/core/src/user_paths.cpp
@@ -119,7 +114,7 @@ if(WIN32)
         message(FATAL_ERROR "Canonical Wintun SHA-256 mismatch: expected ${GLO_WINTUN_SHA256}, got ${GLO_WINTUN_ACTUAL_SHA256}")
     endif()
     target_compile_definitions(glo_client_core PUBLIC _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN NOMINMAX PRIVATE GLO_VERSION="${GLO_VERSION}" GLO_WINTUN_SHA256="${GLO_WINTUN_SHA256}")
-    target_link_libraries(glo_client_core PUBLIC glo_secure glo_protocol glo_route_policy glo_route_scope glo_preflight_policy glo_game_session_hints ws2_32 iphlpapi fwpuclnt shell32 advapi32)
+    target_link_libraries(glo_client_core PUBLIC glo_secure glo_protocol glo_route_policy glo_route_scope glo_profile_hosts ws2_32 iphlpapi shell32 advapi32)
 
     # Generate the Windows resource file in the build directory with an
     # absolute manifest path. GNU windres resolves resource paths from its

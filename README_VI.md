@@ -82,6 +82,5 @@ Cache build nằm dưới `${GLO_BUILD_CACHE_DIR:-$TMPDIR/glo-build-cache}` và 
 - [`BRAND_POLICY.md`](BRAND_POLICY.md) — quy tắc dùng tên/logo GLO.
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — dependency bên thứ ba.
 
-## Tương thích routing (OSS 0.0.3-beta)
+## Định tuyến (OSS 0.0.4-beta)
 
-Windows client có lõi quản lý vòng đời route dùng chung và một adapter tùy chọn đọc tín hiệu endpoint/phiên chơi trong **log Roblox trên máy**. Chỉ lấy endpoint gameplay được cho phép; không injection, chỉnh file game, driver tự viết hay can thiệp anti-cheat. Giữ WFP/Wintun và Direct fail-open. Gợi ý endpoint sớm chỉ mang tính **best-effort**, không bảo đảm chuyển được UDP socket đã kết nối sang relay. Phải có `ROUTE008` và `ROUTE009` mới xác nhận gameplay đi qua relay. Xem [kiến trúc routing](docs/ROUTING_LIFECYCLE.md) và [chẩn đoán](docs/DIAGNOSTICS.md). Các game khác chưa được bật hỗ trợ trong bản này.

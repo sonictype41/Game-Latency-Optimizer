@@ -9,8 +9,8 @@ class WindowsClientContractTests(unittest.TestCase):
             for p in base.rglob('*'):
                 if p.suffix in {'.hpp','.cpp'}: refs.update(re.findall(r'ClientErrorCode::([A-Za-z_][A-Za-z0-9_]*)',p.read_text(encoding='utf-8', errors='ignore')))
         self.assertEqual([],sorted(refs-declared))
-    def test_wintun_endpoint_api_uses_preflight_endpoint(self):
-        h=(CORE/'include/glo/wintun_tunnel.hpp').read_text(encoding='utf-8'); self.assertIn('PreflightEndpoint',h)
+    def test_wintun_profile_route_api_uses_exact_ipv4_hosts(self):
+        h=(CORE/'include/glo/wintun_tunnel.hpp').read_text(encoding='utf-8'); self.assertIn('set_profile_routes',h); self.assertNotIn('set_endpoint(',h)
     def test_ttl_is_not_config_or_provider_data(self):
         h=(CORE/'include/glo/client_core.hpp').read_text(encoding='utf-8'); core=(CORE/'src/client_core.cpp').read_text(encoding='utf-8'); cfg=(CORE/'src/session_config.cpp').read_text(encoding='utf-8')
         self.assertIn('session_remaining_seconds',h); self.assertIn('transport.remaining_seconds()',core); self.assertNotIn('session_ttl',cfg)

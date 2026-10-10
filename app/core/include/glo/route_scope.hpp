@@ -39,7 +39,7 @@ const std::vector<Ipv4Cidr>& roblox_game_allowlist();
 bool roblox_game_ip_allowed(std::uint32_t ip_host) noexcept;
 
 // Roblox documents experience traffic on UDP destination ports 49152-65535.
-// Keep the range in the game profile layer so endpoint-gate/route verification all
+// Keep the range in the game profile layer so Wintun packet classification all
 // share one definition instead of inventing independent heuristics.
 inline constexpr std::uint16_t kRobloxGameplayUdpPortMin = 49152;
 inline constexpr std::uint16_t kRobloxGameplayUdpPortMax = 65535;
