@@ -20,3 +20,19 @@ func TestPublishedProfilePolicy004(t *testing.T) {
 		t.Fatal("bad destination port control")
 	}
 }
+
+func TestMultipleGamesShareHostWithDifferentUDPPorts(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "profiles.json")
+	content := `{"schema":1,"revision":2,"routes":[{"cidr":"43.229.65.1/32","port_min":7000,"port_max":8000},{"cidr":"43.229.65.1/32","port_min":8180,"port_max":8181}]}`
+	if err := os.WriteFile(p, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := readProfileRules(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := glocore.TargetPolicy{Rules: rules}
+	if !policy.Allows(net.ParseIP("43.229.65.1"), 7231, 61582) || !policy.Allows(net.ParseIP("43.229.65.1"), 8181, 61582) || policy.Allows(net.ParseIP("43.229.65.1"), 8100, 61582) {
+		t.Fatal("port gap incorrectly allowed or valid range rejected")
+	}
+}

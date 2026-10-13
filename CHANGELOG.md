@@ -1,5 +1,24 @@
 # Changelog — public OSS releases only
 
+## [0.0.5-beta] - 2026-10-13
+
+### Added
+- VALORANT is the second game supported by Game Latency Optimizer (GLO), following Roblox. Game and region endpoints remain provider-configurable.
+- VALORANT process detection and multi-game session selection in the Windows client.
+- Native Windows session notifications with the GLO app icon when an active session has 5 minutes and 1 minute remaining.
+
+### Changed
+- Generalized supported-game selection without changing the Wintun-based packet routing architecture or existing Roblox defaults.
+
+### Fixed
+- Removed the Roblox-only IPC worker rejection for validated VALORANT sessions while keeping unsupported game IDs rejected.
+
+### Known limitations
+- Windows exact host routes affect all traffic to selected game IPs; unrelated packets on a routed destination may be dropped. VALORANT routing and Vanguard compatibility require live Windows verification before broad rollout.
+- The notification display depends on Windows notification settings and Do Not Disturb.
+
+# Changelog — public OSS releases only
+
 ## [0.0.4-beta] - 2026-10-09
 
 ### Added

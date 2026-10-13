@@ -309,8 +309,8 @@ int worker_main(const std::wstring& pipe_name,const std::string& secret){
                !hex_decode(f[8],grant)||!hex_decode_string(f[9],timeout)||
                !hex_decode_string(f[10],profile_id)||!hex_decode_string(f[11],profile_ips)||
                !parse_int(f[12],revision)||!parse_int(f[13],lo)||!parse_int(f[14],hi))continue;
-            if(game!=static_cast<int>(GameId::Roblox)){rt.send("WORKER_ERROR\t"+hex_encode("Unsupported game profile"));continue;}
-            ClientOptions opt;opt.game_id=GameId::Roblox;opt.routing_policy=direct?RoutingPolicy::DirectOnly:RoutingPolicy::RelayPreferred;
+            if(game!=static_cast<int>(GameId::Roblox) && game!=static_cast<int>(GameId::Valorant)){rt.send("WORKER_ERROR\t"+hex_encode("Unsupported game profile"));continue;}
+            ClientOptions opt;opt.game_id=static_cast<GameId>(game);opt.routing_policy=direct?RoutingPolicy::DirectOnly:RoutingPolicy::RelayPreferred;
             opt.dbg_log=debug!=0;opt.force_handover_grace_ms=std::clamp(grace,500u,3000u);opt.wintun_path=default_wintun_path();
             opt.game_exe_path.clear(); // privileged helper never trusts a caller-supplied executable path
             if(!direct){

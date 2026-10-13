@@ -43,6 +43,10 @@ add_executable(glo_ui_phase_test tests/ui_phase_test.cpp)
 target_include_directories(glo_ui_phase_test PRIVATE app/core/include)
 add_test(NAME glo_ui_phase_test COMMAND glo_ui_phase_test)
 
+add_executable(glo_session_warning_test tests/session_warning_test.cpp)
+target_include_directories(glo_session_warning_test PRIVATE app/core/include)
+add_test(NAME glo_session_warning_test COMMAND glo_session_warning_test)
+
 add_executable(glo_game_profile_test tests/game_profile_test.cpp)
 target_include_directories(glo_game_profile_test PRIVATE app/core/include)
 add_test(NAME glo_game_profile_test COMMAND glo_game_profile_test)

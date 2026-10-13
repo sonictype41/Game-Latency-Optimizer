@@ -7,6 +7,7 @@
 
 #include "glo/cli_policy.hpp"
 #include "glo/client_core.hpp"
+#include "glo/session_warning.hpp"
 #include "glo/client_log.hpp"
 #include "glo/secure_transport.hpp"
 #include "glo/network_worker.hpp"
@@ -88,6 +89,7 @@ struct UiState {
     HICON icon_app_big{}, icon_app_small{}, icon_tray_connected{};
     bool tray_added{false};
     bool tray_connected{false};
+    glo::SessionWarningTracker session_warnings;
     ThemeMode theme{ThemeMode::Light};
     Language language{Language::English};
     UiPage page{UiPage::Main};
@@ -798,6 +800,29 @@ void update_tray_icon(bool force=false) {
     }else if(Shell_NotifyIconW(NIM_MODIFY,&nid)){g_ui->tray_connected=active;}
 }
 
+// Shell_NotifyIcon translates app balloon notifications to Windows toast UI on
+// supported Windows versions. Uses the existing GLO tray icon and no new driver.
+void show_session_warning(int minutes) {
+    if (!g_ui || !g_ui->window || !g_ui->tray_added || (minutes != 5 && minutes != 1)) return;
+    NOTIFYICONDATAW nid{}; nid.cbSize=sizeof(nid);nid.hWnd=g_ui->window;nid.uID=kTrayIconId;
+    nid.uFlags=NIF_INFO;
+    lstrcpynW(nid.szInfoTitle,L"GLO - Sắp hết hạn session",ARRAYSIZE(nid.szInfoTitle));
+    const wchar_t* message=minutes==5
+        ?L"Phiên GLO còn 5 phút. Hãy chuẩn bị kết nối lại."
+        :L"Phiên GLO chỉ còn 1 phút và sắp tự ngắt kết nối.";
+    lstrcpynW(nid.szInfo,message,ARRAYSIZE(nid.szInfo));
+    nid.dwInfoFlags=NIIF_USER|NIIF_LARGE_ICON|NIIF_RESPECT_QUIET_TIME;
+    nid.hBalloonIcon=g_ui->icon_app_big?g_ui->icon_app_big:g_ui->icon_app_small;
+    nid.uTimeout=10000;
+    Shell_NotifyIconW(NIM_MODIFY,&nid);
+}
+void check_session_warnings(const glo::ClientSnapshot& s) {
+    if (!g_ui) return;
+    const bool connected=s.phase!=glo::UiPhase::Disconnected && s.state!=glo::ConnectionState::Connecting && !g_ui->disconnecting.load();
+    const int warning=g_ui->session_warnings.update(s.session_id,s.session_remaining_seconds,connected);
+    if (warning) show_session_warning(warning);
+}
+
 void remove_tray_icon(){
     if(!g_ui||!g_ui->tray_added||!g_ui->window)return;
     NOTIFYICONDATAW nid{};nid.cbSize=sizeof(nid);nid.hWnd=g_ui->window;nid.uID=kTrayIconId;
@@ -835,7 +860,7 @@ void show_tray_menu(HWND hwnd){
 
 LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){case WM_CREATE:g_ui->window=hwnd;g_ui->font_title=make_font(26,FW_BOLD);g_ui->font_hero=make_font(27,FW_BOLD);g_ui->font_body=make_font(14,FW_NORMAL);g_ui->font_label=make_font(11,FW_BOLD);g_ui->font_metric=make_font(18,FW_BOLD);g_ui->font_link=make_font(14,FW_NORMAL,true);g_ui->icon_app_big=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));g_ui->icon_app_small=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_DEFAULTCOLOR));if(g_ui->icon_app_big)SendMessageW(hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(g_ui->icon_app_big));if(g_ui->icon_app_small)SendMessageW(hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(g_ui->icon_app_small));g_ui->icon_settings_light=load_ui_icon(IDI_GLO_SETTINGS_LIGHT);g_ui->icon_settings_dark=load_ui_icon(IDI_GLO_SETTINGS_DARK);g_ui->icon_sun_light=load_ui_icon(IDI_GLO_SUN_LIGHT);g_ui->icon_sun_dark=load_ui_icon(IDI_GLO_SUN_DARK);g_ui->icon_moon_light=load_ui_icon(IDI_GLO_MOON_LIGHT);g_ui->icon_moon_dark=load_ui_icon(IDI_GLO_MOON_DARK);g_ui->icon_back_light=load_ui_icon(IDI_GLO_BACK_LIGHT);g_ui->icon_back_dark=load_ui_icon(IDI_GLO_BACK_DARK);g_ui->icon_official_light=load_ui_icon(IDI_GLO_OFFICIAL_LIGHT);g_ui->icon_official_dark=load_ui_icon(IDI_GLO_OFFICIAL_DARK);g_ui->icon_github_light=load_ui_icon(IDI_GLO_GITHUB_LIGHT);g_ui->icon_github_dark=load_ui_icon(IDI_GLO_GITHUB_DARK);g_ui->icon_facebook_light=load_ui_icon(IDI_GLO_FACEBOOK_LIGHT);g_ui->icon_facebook_dark=load_ui_icon(IDI_GLO_FACEBOOK_DARK);g_ui->icon_paste_light=load_ui_icon(IDI_GLO_PASTE_LIGHT);g_ui->icon_paste_dark=load_ui_icon(IDI_GLO_PASTE_DARK);g_ui->icon_import_light=load_ui_icon(IDI_GLO_IMPORT_LIGHT);g_ui->icon_import_dark=load_ui_icon(IDI_GLO_IMPORT_DARK);g_ui->icon_connect_light=load_ui_icon(IDI_GLO_CONNECT_LIGHT);g_ui->icon_connect_dark=load_ui_icon(IDI_GLO_CONNECT_DARK);g_ui->icon_disconnect_light=load_ui_icon(IDI_GLO_DISCONNECT_LIGHT);g_ui->icon_disconnect_dark=load_ui_icon(IDI_GLO_DISCONNECT_DARK);g_ui->icon_tray_connected=make_connected_tray_icon(g_ui->icon_app_small);update_tray_icon(true);SetTimer(hwnd,42,250,nullptr);return 0;
     case WM_COPYDATA:{auto*cds=reinterpret_cast<COPYDATASTRUCT*>(lp);if(!cds||cds->dwData!=kHandoffCopyData||!cds->lpData||cds->cbData<sizeof(wchar_t)||cds->cbData>16384)return FALSE;std::wstring uri(static_cast<const wchar_t*>(cds->lpData));ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);handle_handoff_uri(uri);return TRUE;}
-    case WM_TIMER:if(wp==42){const auto snap=g_ui->client.snapshot();bool repaint=snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load();if(g_ui->action_feedback!=ActionFeedback::None){if(GetTickCount64()>=g_ui->action_feedback_until_ms){g_ui->action_feedback=ActionFeedback::None;g_ui->action_feedback_until_ms=0;}repaint=true;}if(repaint)InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon();return 0;}break;
+    case WM_TIMER:if(wp==42){const auto snap=g_ui->client.snapshot();bool repaint=snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load();if(g_ui->action_feedback!=ActionFeedback::None){if(GetTickCount64()>=g_ui->action_feedback_until_ms){g_ui->action_feedback=ActionFeedback::None;g_ui->action_feedback_until_ms=0;}repaint=true;}if(repaint)InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon();check_session_warnings(snap);return 0;}break;
     case WM_PAINT:{PAINTSTRUCT ps{};HDC dc=BeginPaint(hwnd,&ps);paint_ui(hwnd,dc);EndPaint(hwnd,&ps);return 0;}case WM_ERASEBKGND:return 1;
     case WM_SETCURSOR:if(LOWORD(lp)==HTCLIENT){POINT pt{};GetCursorPos(&pt);ScreenToClient(hwnd,&pt);if(g_ui->modal!=InAppModal::None){const bool hot=point_in(g_ui->modal_cancel_rect,pt)||point_in(g_ui->modal_primary_rect,pt)||point_in(g_ui->modal_uri_rect,pt)||point_in(g_ui->modal_paste_rect,pt)||point_in(g_ui->modal_import_rect,pt);if(hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}break;}const bool common=point_in(g_ui->official_rect,pt)||point_in(g_ui->github_rect,pt)||point_in(g_ui->facebook_rect,pt)||point_in(g_ui->theme_rect,pt);const bool page_hot=g_ui->page==UiPage::Settings?(point_in(g_ui->back_rect,pt)||point_in(g_ui->language_en_rect,pt)||point_in(g_ui->language_vi_rect,pt)||point_in(g_ui->debug_toggle_rect,pt)||point_in(g_ui->debug_log_link_rect,pt)):(point_in(g_ui->settings_rect,pt)||point_in(g_ui->paste_rect,pt)||point_in(g_ui->import_rect,pt)||point_in(g_ui->connect_rect,pt)||point_in(g_ui->how_to_use_rect,pt)||point_in(g_ui->relay_eye_rect,pt));if(common||page_hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}}break;
     case WM_LBUTTONUP:{
@@ -882,7 +907,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){ca
         if(g_ui->modal!=InAppModal::None)return 0;
         if(wp==VK_ESCAPE&&g_ui->page==UiPage::Settings){g_ui->page=UiPage::Main;InvalidateRect(hwnd,nullptr,FALSE);return 0;}
         if(wp==VK_RETURN&&g_ui->page==UiPage::Main){const auto snap=g_ui->client.snapshot();if(snap.phase==glo::UiPhase::Disconnected&&snap.state!=glo::ConnectionState::Connecting)connect_loaded();return 0;}break;
-    case WM_GLO_UPDATE:{const auto s=g_ui->client.snapshot();if(s.session_id!=0&&!g_ui->config_consumed){g_ui->config_consumed=true;g_ui->options.session_grant.clear();if(g_ui->config)g_ui->config->grant.clear();}if(s.phase==glo::UiPhase::Disconnected&&g_ui->config_consumed&&!g_ui->disconnecting.load())clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);UpdateWindow(hwnd);update_tray_icon();if(s.error&&s.error->generation&&s.error->generation!=g_ui->last_error_generation){g_ui->last_error_generation=s.error->generation;const auto[t,m]=localized_error(*s.error);MessageBoxW(hwnd,m.c_str(),t.c_str(),MB_OK|MB_ICONERROR|MB_TASKMODAL);}return 0;}
+    case WM_GLO_UPDATE:{const auto s=g_ui->client.snapshot();if(s.session_id!=0&&!g_ui->config_consumed){g_ui->config_consumed=true;g_ui->options.session_grant.clear();if(g_ui->config)g_ui->config->grant.clear();}if(s.phase==glo::UiPhase::Disconnected&&g_ui->config_consumed&&!g_ui->disconnecting.load())clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);UpdateWindow(hwnd);update_tray_icon();check_session_warnings(s);if(s.error&&s.error->generation&&s.error->generation!=g_ui->last_error_generation){g_ui->last_error_generation=s.error->generation;const auto[t,m]=localized_error(*s.error);MessageBoxW(hwnd,m.c_str(),t.c_str(),MB_OK|MB_ICONERROR|MB_TASKMODAL);}return 0;}
     case WM_GLO_DISCONNECT_DONE:if(g_ui->disconnect_thread.joinable())g_ui->disconnect_thread.join();g_ui->disconnecting=false;if(g_ui->config_consumed)clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon(true);return 0;
     case WM_GLO_TRAY:
         if(lp==WM_LBUTTONUP||lp==WM_LBUTTONDBLCLK){show_main_window(hwnd);return 0;}

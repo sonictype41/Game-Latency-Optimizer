@@ -52,10 +52,11 @@ func readProfileRules(path string) ([]glocore.TargetRule, error) {
 		if ones != 32 || bits != 32 || !glocore.PublicIPv4(ip) || ip.String() != n.IP.String() {
 			return nil, errors.New("relay profile must contain only public /32 routes")
 		}
-		if seen[r.CIDR] || r.PortMin < 1 || r.PortMax < r.PortMin {
+		key := fmt.Sprintf("%s:%d-%d", r.CIDR, r.PortMin, r.PortMax)
+		if seen[key] || r.PortMin < 1 || r.PortMax < r.PortMin {
 			return nil, errors.New("duplicate route or invalid UDP port policy")
 		}
-		seen[r.CIDR] = true
+		seen[key] = true
 		out = append(out, glocore.TargetRule{Network: n, MinPort: r.PortMin, MaxPort: r.PortMax})
 	}
 	return out, nil

@@ -8,6 +8,14 @@ int main(){
   assert(glo::parse_session_config_json(good,c,e));
   assert(c.profile_id=="roblox-sg" && c.gameplay_ipv4=="128.116.97.33/32" && c.port_min==49152);
   assert(c.relay_host=="127.0.0.1" && c.relay_port==43170 && c.relay_name=="Singapore-01" && c.grant.size()==152 && c.game_id==glo::GameId::Roblox);
+  auto vg=good;
+  const auto old_game=std::string("\"game\":\"roblox\"");
+  vg.replace(vg.find(old_game),old_game.size(),"\"game\":\"valorant\"");
+  assert(glo::parse_session_config_json(vg,c,e));
+  assert(c.game_id==glo::GameId::Valorant);
+  // The parser is still strict for unsupported games.
+  vg.replace(vg.find("\"game\":\"valorant\""),std::string("\"game\":\"valorant\"").size(),"\"game\":\"not-supported\"");
+  assert(!glo::parse_session_config_json(vg,c,e));
   auto bad=good; bad.insert(bad.size()-1,",\"issuer_seed_file\":\"C:/secret\"");
   assert(!glo::parse_session_config_json(bad,c,e));
 

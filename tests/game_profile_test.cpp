@@ -7,6 +7,8 @@ int main() {
     static_assert(kGameProfiles.size() >= 4);
     static_assert(default_game() == GameId::Roblox);
     static_assert(game_supported(GameId::Roblox));
+    static_assert(game_supported(GameId::Valorant));
+    static_assert(game_profile(GameId::Valorant).key == "valorant");
     static_assert(!game_supported(GameId::Minecraft));
     static_assert(game_name(GameId::Roblox) == std::string_view{"Roblox"});
     assert(game_profile(GameId::LeagueOfLegends).key == "league-of-legends");

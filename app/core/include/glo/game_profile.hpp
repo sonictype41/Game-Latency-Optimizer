@@ -11,6 +11,7 @@ enum class GameId : std::uint8_t {
     Minecraft = 1,
     PUBG = 2,
     LeagueOfLegends = 3,
+    Valorant = 4,
 };
 
 struct GameProfile {
@@ -20,11 +21,12 @@ struct GameProfile {
     bool supported{};
 };
 
-inline constexpr std::array<GameProfile, 4> kGameProfiles{{
+inline constexpr std::array<GameProfile, 5> kGameProfiles{{
     {GameId::Roblox, "roblox", "Roblox", true},
     {GameId::Minecraft, "minecraft", "Minecraft", false},
     {GameId::PUBG, "pubg", "PUBG", false},
     {GameId::LeagueOfLegends, "league-of-legends", "League of Legends", false},
+    {GameId::Valorant, "valorant", "VALORANT", true},
 }};
 
 constexpr const GameProfile& game_profile(GameId id) noexcept {
