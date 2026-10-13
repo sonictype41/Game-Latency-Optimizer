@@ -725,6 +725,7 @@ func main() {
 			if e != nil || frame.Direction != glocore.DataDirectionC2S {
 				continue
 			}
+			firstOutbound := false
 			flow, ok := srv.ValidateDataC2S(peer, frame.SessionID, now, n, frame.Sequence, frame.FlowID)
 			if !ok {
 				continue
@@ -769,6 +770,7 @@ func main() {
 					usage.gameplayActive(frame.SessionID, now)
 					logger.info("SESS005", "event=gameplay_active session=%d active_gameplay=%d", frame.SessionID, srv.ActiveGameplaySessions())
 				}
+				firstOutbound = true
 				startReverse(frame.SessionID, frame.FlowID, flow, flowConn)
 			}
 			if flow != nil && flow.EndpointMatches(prefix) {
@@ -781,6 +783,9 @@ func main() {
 				continue
 			}
 			if written, e := flow.Conn.Write(frame.Payload); e == nil {
+				if firstOutbound && logger.debug {
+					logger.debugf("FLOW006", "event=first_game_tx session=%d flow=%d target=%s egress=%s bytes=%d", frame.SessionID, frame.FlowID, flow.Target, flow.Conn.LocalAddr(), written)
+				}
 				counters.gameTX.Add(1)
 				usage.addGameTX(frame.SessionID, written)
 				srv.CountRelayToGame(frame.SessionID)

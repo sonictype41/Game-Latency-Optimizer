@@ -12,7 +12,7 @@ int main() {
     CHECK(classify_ui_phase(true, true, true) == UiPhase::Gameplay);
     ClientOptions options;
     CHECK(options.routing_policy == RoutingPolicy::RelayPreferred);
-    CHECK(options.force_handover_grace_ms == 1800);
+    CHECK(options.force_handover_grace_ms == 3000);
     CHECK(!options.dbg_log);
     ClientSnapshot snapshot;
     CHECK(snapshot.active_route == ActiveRoute::Direct);

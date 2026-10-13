@@ -13,6 +13,7 @@ Diagnostic counters are collected **only during relay verification while Debug l
 | `WINTUN` | Adapter/session and bounded receive-path counters | `WINTUN002`, `WINTUN007` |
 | `PROC` | Game process detection/lifecycle | `PROC002` |
 | `ROUTE` | Exact Windows route, relay verification, fail-open | `ROUTE007`, `ROUTE008`, `ROUTE009`, `ROUTE016` |
+| `VERIFY` | First-flow timing and reverse-flow proof | `VERIFY001`, `VERIFY005`, `VERIFY006` |
 | `NET` | Local socket delivery of encapsulated gameplay | `NET005` (socket configuration), `NET006` (verification send summary) |
 | `QUAL`, `TELEM` | Quality statistics after relay lock | `QUAL001`, `TELEM001` |
 
@@ -24,33 +25,37 @@ Verified profile IPv4 /32 entries are installed before game UDP socket creation;
 
 `RELAY003 → WINTUN002 → ROUTE007 → ROUTE008 → ROUTE009` means the relay control handshake succeeded, profile /32 routes were installed, **at least one** gameplay datagram was sent via the client socket, and a matching reverse flow was verified. Only then is a relay gameplay session marked active. The app showing Connected after control handshake does not mean packets are yet flowing.
 
-## Timeout report (new in 0.0.2-beta-r1)
+## OSS 0.0.5-r1-beta: first-flow verification diagnostics
 
-When `ROUTE016` occurs with Debug already enabled, GLO emits **one bounded report (3 lines) no more than once every 2 seconds**, rather than a line per packet. Additional timeouts are counted as `suppressed=N` in the next emitted `ROUTE016`:
+The default global verification deadline is **3,000 ms** for every supported game. This is an upper bound: a valid matched S2C packet immediately confirms Relay. An unsuccessful attempt still fails open to Direct. Additional flows do **not** restart the deadline.
+
+Enable Debug **before** connecting. The following records are emitted once per stage or terminal outcome, not once per packet:
+
+- `VERIFY000`: actual relay endpoint and profile used by the client (no session grant or bearer token).
+- `VERIFY001`: start of the first successfully forwarded flow, exact IPv4/UDP tuple, route epoch and timeout.
+- `VERIFY003`: first GLOD S2C packet of the session (may be from a flow that cannot be injected).
+- `VERIFY004`: first S2C packet successfully injected into Wintun.
+- `VERIFY005`: verified flow, event ordering and aggregate counters.
+- `VERIFY006`: verification timeout or interruption and aggregate counters, including Winsock failure and Wintun RX/UDP filter data.
+- `FLOW006` (relay `--debug`): first UDP datagram successfully written to the game endpoint, its target and outbound socket address. Existing relay `FLOW004` records the first upstream reply and priority queueing when debug is enabled.
+
+Example (illustrative, not a real capture):
 
 ```text
-WARN code=ROUTE016 event=fail_open reason=relay_verification_timeout stage=no_wintun_packet epoch=8 verify_ms=1800
-INFO code=WINTUN007 event=verification_snapshot epoch=8 rx_total=0 rx_game_host=0 rx_game_udp=0 forwarded=0 send_failed=0 bad_ip=0 other_host=0 non_udp=0 wrong_port=0 stale_epoch=0 malformed_udp=0 oversize=0
-INFO code=NET006 event=gameplay_send_snapshot send_ok=0 encode_failed=0 socket_failed=0 last_wsa_error=0
+INFO code=VERIFY001 event=begin game=VALORANT flow_id=1 route_epoch=4 destination=151.106.248.1:7077 local_port=60288 timeout_ms=3000
+WARN code=VERIFY006 event=verification_timeout flow_id=1 elapsed_ms=3000 timeout_ms=3000 forwarded_flows=1 c2s_ok=88 encode_fail=0 socket_fail=0 last_wsa=0 s2c_rx=0 inject_ok=0 inject_fail=0 wintun_rx=90 wintun_game_udp=88 wintun_forwarded=88 wintun_wrong_port=2 wintun_send_failed=0
+WARN code=ROUTE016 event=fail_open reason=relay_verification_timeout
 ```
 
-Example numbers are illustrative. All are **datagram counts for the currently installed host-route observation window**, not byte counts or evidence of whether the game emitted packets outside Wintun. The per-route snapshot uses lock-free counters; a packet in flight at route turnover may not be included.
+`ROUTE008` / `c2s_ok` prove successful client **local socket writes**, not delivery to the relay or the game. `FLOW006` proves a successful relay UDP socket write, not acceptance by Riot. `FLOW004 first_game_rx` proves that the relay did receive a response from the game's socket. `VERIFY004` proves successful local Wintun injection; `VERIFY005` proves that the routing worker matched the correct flow/route epoch. A session can have a slow first response without the gameplay RTT itself being slow. A relay that never returns gameplay still fails open after the deadline.
 
-`stage` values and what they establish:
-
-- `no_packet_for_routed_host`: packets reached Wintun but not the selected /32 host. Check route selection and other host traffic.
-- `packet_filtered_or_malformed`: selected-host packets were observed, but none passed gameplay UDP validation. Check `non_udp`, `wrong_port`, `bad_ip`, `malformed_udp`.
-- `gameplay_send_failed`: at least one valid gameplay UDP datagram hit a local send failure with no successful forward. Check `NET006` `encode_failed`, `socket_failed` and numeric Winsock error.
-- `no_forwarded_gameplay`: GLO saw candidate gameplay but had no successful transfer to the relay socket; inspect payload size and rejection counters.
-- `awaiting_matching_reply`: at least one datagram was sent to the relay socket, but no valid matching reverse packet arrived before timeout. Investigate relay gameplay flow and reverse injection.
-
-`diagnostic_unavailable` means debug counters were not active for the complete verification window. `ROUTE016` is a timeout classification, **not proof the relay itself has failed**. `WINTUN007` and `NET006` together identify the furthest confirmed stage. `ROUTE008` is only recorded after `send()` reports successful local delivery into a UDP socket; it is **not** confirmation of remote network delivery.
+Only counter summaries are recorded, not raw game traffic. The `VERIFY000` endpoint and `VERIFY001` IP/ports are potentially identifying diagnostics; redact these before sharing externally. Cross-machine correlation may use the debug-only session/flow IDs. There is no wire-protocol or WFP change.
 
 ## Safe incident workflow
 
 1. Reproduce once with debug enabled; capture complete log from `RELAY003` through `ROUTE016` (or `ROUTE009`).
 2. Match the session ID between relay's `SESS001` and client `RELAY003` when available; compare `flows_opened` and `gameplay_sessions`. Counters may be cumulative across sessions.
-3. Do not increase the verify timeout or disable fail-open before determining the missing stage.
+3. Compare the first-flow counters and relay `FLOW004`/`FLOW006` events; do not disable fail-open.
 4. Remove/obscure bearer tokens, session configs, public IP addresses and other personal identifiers when publishing logs. Never collect raw payloads by default.
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

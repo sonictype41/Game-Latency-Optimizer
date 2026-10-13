@@ -1,5 +1,23 @@
 # Changelog — public OSS releases only
 
+## [0.0.5-r1-beta] - 2026-10-13
+
+### Changed
+- Increased the **global** relay reverse-flow verification grace period from 1,800 ms to 3,000 ms for all supported games. A valid S2C reply still confirms Relay immediately; only unsuccessful verification waits longer before Direct fail-open.
+- Verification deadline now starts with the first successfully forwarded gameplay flow and is not restarted by later flow-opening events.
+
+### Added
+- Debug-only `VERIFY000`–`VERIFY006` diagnostics for relay endpoint, flow destination and ports, verification timing, local C2S/S2C/injection counters and timeout summary. No token or packet payload logging.
+- Debug-only Linux relay first-flow TX and first reverse-reply diagnostics, correlated using session and flow IDs.
+- Portable regression coverage for reverse-before-forward event ordering and bounded early reverse evidence.
+
+### Fixed
+- Prevented a successful Wintun reverse injection from being missed when its event is observed before `FirstForwarded` is processed. Flow and route epoch must still match before Relay lock.
+
+### Known limitations
+- A 3-second timeout cannot fix an upstream that never replies; when verification fails, Direct fail-open may now take up to 1.2 seconds longer. Existing system-wide Windows host-route limitations are unchanged.
+- Live Windows / Vanguard compatibility and end-to-end A/B checks are still required; no claims of improved Valorant game ping are made.
+
 ## [0.0.5-beta] - 2026-10-13
 
 ### Added

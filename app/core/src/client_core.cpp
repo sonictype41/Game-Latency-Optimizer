@@ -23,6 +23,7 @@
 #include <cmath>
 #include <chrono>
 #include <deque>
+#include <sstream>
 #include <exception>
 #include <mutex>
 #include <optional>
@@ -454,6 +455,8 @@ void ClientCore::worker(ClientOptions options) {
         snapshot_.active_route = ActiveRoute::Direct;
         snapshot_.session_remaining_seconds = transport.remaining_seconds();
     }
+    log.info("VERIFY000", "event=relay_selected endpoint="+options.relay_host+":"+
+             std::to_string(options.relay_port)+" profile="+options.profile_id);
     log.info("RELAY003", "event=handshake_ok session=" + std::to_string(sid) +
                            " generation=" + std::to_string(generation) +
                            " rtt_ms=" + std::to_string(handshake_rtt_ms));
@@ -491,7 +494,7 @@ void ClientCore::worker(ClientOptions options) {
                 event.type = RouteEventType::TunnelNonGameTrafficDropped;
                 event.ip_protocol = e.ip_protocol;
                 if (e.flow.route_epoch != 0) {
-                    event.flow = RouteFlowIdentity{e.flow.route_epoch, 0, e.flow.remote_ipv4_host, 0, 0};
+                    event.flow = RouteFlowIdentity{e.flow.route_epoch, 0, e.flow.remote_ipv4_host, e.flow.remote_port, 0};
                 }
                 break;
             case WintunEventType::StoppedUnexpectedly:
@@ -503,7 +506,9 @@ void ClientCore::worker(ClientOptions options) {
 
     std::atomic<std::uint64_t> net_send_ok{0}, net_encode_fail{0}, net_socket_fail{0};
     std::atomic<int> net_last_wsa_error{0};
-    std::atomic_bool verification_diagnostics{false};
+    std::atomic_bool verification_diagnostics{log.enabled()};
+    std::atomic<std::uint64_t> verify_s2c_rx{0}, verify_inject_ok{0}, verify_inject_fail{0};
+    std::atomic_bool verify_first_s2c_logged{false}, verify_first_inject_logged{false};
     std::string tunnel_error;
     if (!tunnel.arm(options.wintun_path, sid,
                     [&](const protocol::Packet& p) { return send_packet(p); },
@@ -535,6 +540,7 @@ void ClientCore::worker(ClientOptions options) {
                                   "\n\nCheck that the official amd64 wintun.dll is beside GLO.exe, then try again.");
         return;
     }
+    tunnel.set_diagnostics_enabled(log.enabled());
     log.info("WINTUN002", "event=ready routes=0");
     publish(ConnectionState::Monitoring, "Connected - waiting for a game");
 
@@ -561,16 +567,61 @@ void ClientCore::worker(ClientOptions options) {
     log.info("ROUTE007","event=profile_routes_installed count="+std::to_string(profile_hosts.size())+
              " profile="+options.profile_id+" revision="+std::to_string(options.profile_revision));
     std::thread route_thread([&] {
-        ForwardedFlowSet forwarded;
+        VerificationEvidence evidence;
         bool direct_locked=false;
         bool relay_locked=false;
+        std::optional<Clock::time_point> verify_started;
         std::optional<Clock::time_point> verify_deadline;
+        RouteFlowIdentity first_forwarded{};
+        auto elapsed_ms = [&]() -> std::uint64_t {
+            if (!verify_started) return 0;
+            return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                Clock::now()-*verify_started).count());
+        };
+        auto stats = [&]() -> std::string {
+            const auto d = tunnel.route_diagnostics();
+            return " elapsed_ms="+std::to_string(elapsed_ms())+
+                " timeout_ms="+std::to_string(options.force_handover_grace_ms)+
+                " forwarded_flows="+std::to_string(evidence.forwarded_count())+
+                " c2s_ok="+std::to_string(net_send_ok.load())+
+                " encode_fail="+std::to_string(net_encode_fail.load())+
+                " socket_fail="+std::to_string(net_socket_fail.load())+
+                " last_wsa="+std::to_string(net_last_wsa_error.load())+
+                " s2c_rx="+std::to_string(verify_s2c_rx.load())+
+                " inject_ok="+std::to_string(verify_inject_ok.load())+
+                " inject_fail="+std::to_string(verify_inject_fail.load())+
+                " wintun_rx="+std::to_string(d.rx_total)+
+                " wintun_game_udp="+std::to_string(d.rx_game_udp)+
+                " wintun_forwarded="+std::to_string(d.forwarded)+
+                " wintun_wrong_port="+std::to_string(d.wrong_port)+
+                " wintun_send_failed="+std::to_string(d.send_failed);
+        };
+        auto finish_diagnostics = [&] {
+            verification_diagnostics.store(false, std::memory_order_release);
+            tunnel.set_diagnostics_enabled(false);
+        };
+        auto lock_relay = [&](const RouteFlowIdentity& flow, const char* ordering) {
+            if (relay_locked || direct_locked) return;
+            relay_locked=true;
+            route_state=RouteControlState::RelayLocked;
+            verify_deadline.reset();
+            set_route_ui(ActiveRoute::Relay);
+            set_direct_reason(DirectReason::None);
+            log.info("VERIFY005", "event=verified flow_id="+std::to_string(flow.flow_id)+
+                     " ordering="+ordering+stats());
+            finish_diagnostics();
+            log.info("ROUTE009", "event=relay_locked flow_id="+std::to_string(flow.flow_id));
+            publish(ConnectionState::Relayed,"In game - Relay");
+        };
         while(true){
             RouteEvent ev;
-            bool got=verify_deadline ? route_events.wait_pop_until(ev,*verify_deadline) : route_events.wait_pop(ev);
+            const bool got=verify_deadline ? route_events.wait_pop_until(ev,*verify_deadline) : route_events.wait_pop(ev);
             if(!got){
                 if(verify_deadline && Clock::now()>=*verify_deadline){
+                    log.warn("VERIFY006", "event=verification_timeout flow_id="+
+                             std::to_string(first_forwarded.flow_id)+stats());
                     log.warn("ROUTE016","event=fail_open reason=relay_verification_timeout",std::chrono::seconds(2));
+                    finish_diagnostics();
                     direct_locked=true;tunnel.clear_routes();routed_gameplay_host=0;
                     route_state=RouteControlState::DirectLocked;set_route_ui(ActiveRoute::Direct);
                     set_direct_reason(DirectReason::RelayUnavailable);publish(ConnectionState::Direct,"In game - Direct");
@@ -583,26 +634,45 @@ void ClientCore::worker(ClientOptions options) {
             if(ev.generation!=0 && ev.generation!=generation)continue;
             if(direct_locked)continue;
             if(ev.type==RouteEventType::FirstForwarded && ev.flow && ev.flow->valid()){
-                forwarded.remember(*ev.flow);
+                const bool reverse_already_seen=evidence.observe_forwarded(*ev.flow);
                 routed_gameplay_host.store(ev.flow->remote_ipv4_host);
-                if(!relay_locked){route_state=RouteControlState::RelayVerifying;
-                    verify_deadline=Clock::now()+std::chrono::milliseconds(options.force_handover_grace_ms);}
+                if(!relay_locked && !verify_deadline){
+                    verify_started=Clock::now();
+                    verify_deadline=*verify_started+std::chrono::milliseconds(options.force_handover_grace_ms);
+                    first_forwarded=*ev.flow;
+                    log.info("VERIFY001","event=begin game="+std::string(game_name(options.game_id))+
+                             " flow_id="+std::to_string(ev.flow->flow_id)+
+                             " route_epoch="+std::to_string(ev.flow->route_epoch)+
+                             " destination="+std::to_string((ev.flow->remote_ipv4_host>>24)&255)+"."+
+                             std::to_string((ev.flow->remote_ipv4_host>>16)&255)+"."+
+                             std::to_string((ev.flow->remote_ipv4_host>>8)&255)+"."+
+                             std::to_string(ev.flow->remote_ipv4_host&255)+":"+
+                             std::to_string(ev.flow->remote_port)+
+                             " local_port="+std::to_string(ev.flow->local_port)+
+                             " timeout_ms="+std::to_string(options.force_handover_grace_ms));
+                }
+                if(!relay_locked) route_state=RouteControlState::RelayVerifying;
                 log.info("ROUTE008","event=forwarded_flow flow_id="+std::to_string(ev.flow->flow_id));
-            }else if(ev.type==RouteEventType::RelayReverseConfirmed && ev.flow && forwarded.matches(*ev.flow)){
-                if(!relay_locked){relay_locked=true;route_state=RouteControlState::RelayLocked;
-                    verify_deadline.reset();set_route_ui(ActiveRoute::Relay);set_direct_reason(DirectReason::None);
-                    log.info("ROUTE009","event=relay_locked flow_id="+std::to_string(ev.flow->flow_id));
-                    publish(ConnectionState::Relayed,"In game - Relay");}
-                routed_gameplay_host.store(ev.flow->remote_ipv4_host);
+                if(reverse_already_seen) lock_relay(*ev.flow, "reverse_before_forward_event");
+            }else if(ev.type==RouteEventType::RelayReverseConfirmed && ev.flow && ev.flow->valid()){
+                if(evidence.observe_reverse(*ev.flow)) {
+                    lock_relay(*ev.flow, "forward_before_reverse_event");
+                    routed_gameplay_host.store(ev.flow->remote_ipv4_host);
+                }
             }else if(ev.type==RouteEventType::TunnelNonGameTrafficDropped){
-                log.warn("WINTUN006","event=non_game_packet_dropped protocol="+std::to_string(ev.ip_protocol),std::chrono::seconds(10));
+                log.warn("WINTUN006","event=non_game_packet_dropped protocol="+std::to_string(ev.ip_protocol)+
+                         (ev.flow ? " destination_host="+std::to_string(ev.flow->remote_ipv4_host)+
+                         " destination_port="+std::to_string(ev.flow->remote_port) : ""),std::chrono::seconds(10));
             }else if(ev.type==RouteEventType::RelayUnavailable || ev.type==RouteEventType::TunnelStopped || ev.type==RouteEventType::RelayRejected){
+                if(verify_deadline)log.warn("VERIFY006","event=interrupted reason=relay_unavailable"+stats());
+                finish_diagnostics();
                 direct_locked=true;tunnel.clear_routes();routed_gameplay_host=0;route_state=RouteControlState::DirectLocked;
                 set_route_ui(ActiveRoute::Direct);set_direct_reason(DirectReason::RelayUnavailable);
                 log.warn("ROUTE026","event=fail_open reason=relay_unavailable",std::chrono::seconds(2));
                 publish(ConnectionState::Direct,"In game - Direct");verify_deadline.reset();
             }
         }
+        finish_diagnostics();
     });
 
     struct LossPoint {
@@ -655,6 +725,12 @@ void ClientCore::worker(ClientOptions options) {
             break;
         }
         sync_debug_log();
+        if (route_state.load(std::memory_order_acquire) == RouteControlState::WaitingForGame ||
+            route_state.load(std::memory_order_acquire) == RouteControlState::RelayVerifying) {
+            const bool diagnostic = log.enabled();
+            verification_diagnostics.store(diagnostic, std::memory_order_release);
+            tunnel.set_diagnostics_enabled(diagnostic);
+        }
         const auto now = Clock::now();
         {
             std::scoped_lock lock(mutex_);
@@ -762,9 +838,29 @@ void ClientCore::worker(ClientOptions options) {
             if (d.direction == protocol::DataDirection::S2C && d.session_id == sid) {
                 if (d.sequence != 0) s2c_session_loss.observe(d.sequence);
                 if (quality_active && d.sequence != 0) s2c_loss.observe(d.sequence);
+                // A valid S2C can arrive before the routing worker consumes
+                // FirstForwarded. Never condition confirmation on that worker's
+                // transient RelayVerifying state; match the exact flow+epoch there.
+                const auto verify_state = route_state.load(std::memory_order_acquire);
+                const bool collecting = verify_state == RouteControlState::WaitingForGame ||
+                                        verify_state == RouteControlState::RelayVerifying;
+                if (collecting && log.enabled()) {
+                    verify_s2c_rx.fetch_add(1, std::memory_order_relaxed);
+                    if (!verify_first_s2c_logged.exchange(true))
+                        log.info("VERIFY003", "event=first_s2c_received flow_id="+std::to_string(d.flow_id));
+                }
                 WintunFlowIdentity injected{};
-                if (tunnel.inject_reply(d.flow_id, d.payload, &injected) &&
-                    route_state.load(std::memory_order_acquire) == RouteControlState::RelayVerifying) {
+                const bool injection_ok = tunnel.inject_reply(d.flow_id, d.payload, &injected);
+                if (collecting && log.enabled()) {
+                    if (injection_ok) {
+                        verify_inject_ok.fetch_add(1, std::memory_order_relaxed);
+                        if (!verify_first_inject_logged.exchange(true))
+                            log.info("VERIFY004", "event=first_wintun_inject_ok flow_id="+std::to_string(d.flow_id));
+                    } else {
+                        verify_inject_fail.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+                if (injection_ok && collecting) {
                     RouteEvent reverse;
                     reverse.type = RouteEventType::RelayReverseConfirmed;
                     reverse.generation = generation;

@@ -57,5 +57,21 @@ int main() {
     assert(!forwarded.matches(wrong_epoch));
     forwarded.clear();
     assert(!forwarded.matches(candidate));
+
+    VerificationEvidence proof;
+    assert(!proof.observe_reverse(first));  // reverse event arrives before forward event
+    assert(proof.observe_forwarded(first)); // paired by exact flow/epoch
+    assert(!proof.observe_forwarded(candidate));
+    assert(proof.observe_reverse(candidate));
+    VerificationEvidence wrong;
+    assert(!wrong.observe_reverse(wrong_epoch));
+    assert(!wrong.observe_forwarded(candidate));
+    for (std::uint32_t i=1; i<=40; ++i) {
+        RouteFlowIdentity extra{4,i+100,0x80742e21u,56763,55329};
+        assert(!wrong.observe_reverse(extra));
+    }
+    RouteFlowIdentity expired{4,101,0x80742e21u,56763,55329};
+    assert(!wrong.observe_forwarded(expired)); // bounded cache evicts oldest
+
     return 0;
 }

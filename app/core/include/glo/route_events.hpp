@@ -95,6 +95,42 @@ private:
     std::unordered_map<std::uint32_t, RouteFlowIdentity> flows_;
 };
 
+// During first-flow verification the reverse receive thread can enqueue its
+// confirmation before the Wintun sender event is consumed. Preserve up to 32
+// validated reverse tuples until the matching forwarded tuple is observed.
+// No payloads are retained; tuple+route epoch prevent cross-flow confirmation.
+class VerificationEvidence {
+public:
+    [[nodiscard]] bool observe_forwarded(const RouteFlowIdentity& flow) {
+        if (!flow.valid()) return false;
+        forwarded_.remember(flow);
+        for (auto it = early_reverse_.begin(); it != early_reverse_.end(); ++it) {
+            if (same_route_flow(*it, flow)) {
+                early_reverse_.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool observe_reverse(const RouteFlowIdentity& flow) {
+        if (!flow.valid()) return false;
+        if (forwarded_.matches(flow)) return true;
+        for (const auto& buffered : early_reverse_) {
+            if (same_route_flow(buffered, flow)) return false;
+        }
+        if (early_reverse_.size() >= 32) early_reverse_.pop_front();
+        early_reverse_.push_back(flow);
+        return false;
+    }
+
+    [[nodiscard]] std::size_t forwarded_count() const noexcept { return forwarded_.size(); }
+
+private:
+    ForwardedFlowSet forwarded_;
+    std::deque<RouteFlowIdentity> early_reverse_;
+};
+
 struct RouteEvent {
     RouteEventType type{RouteEventType::Disconnect};
     std::uint64_t generation{0};

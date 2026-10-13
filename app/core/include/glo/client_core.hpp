@@ -94,7 +94,7 @@ struct ClientOptions {
     std::uint16_t port_min{49152}, port_max{65535};
     std::string game_exe_path; // privileged helper resolves this itself; not config data
     RoutingPolicy routing_policy{RoutingPolicy::RelayPreferred};
-    unsigned force_handover_grace_ms{1800};
+    unsigned force_handover_grace_ms{3000};
     bool dbg_log{false};
 };
 

@@ -62,7 +62,7 @@ class WindowsInstallerContractTests(unittest.TestCase):
         release=(ROOT/'RELEASE').read_text(encoding='utf-8').strip()
         display=(ROOT/'DISPLAY_VERSION').read_text(encoding='utf-8').strip()
         self.assertRegex(version, r'^[0-9]+\.[0-9]+\.[0-9]+$')
-        self.assertRegex(release, rf'^{re.escape(version)}(?:-(?:r[1-9][0-9]*|alpha(?:\.[1-9][0-9]*)?|beta(?:(?:\.[1-9][0-9]*)|(?:-r[1-9][0-9]*))?))?$')
+        self.assertRegex(release, rf'^{re.escape(version)}(?:-(?:r[1-9][0-9]*(?:-beta)?|alpha(?:\.[1-9][0-9]*)?|beta(?:(?:\.[1-9][0-9]*)|(?:-r[1-9][0-9]*))?))?$')
         self.assertTrue(display==release or re.fullmatch(rf'{re.escape(version)}-[0-9]{{8}}',display))
         self.assertIn('DisplayVersion" "${DISPLAY_VERSION}"', self.nsi)
         ui=(ROOT/'app/frontend/main.cpp').read_text(encoding='utf-8')
