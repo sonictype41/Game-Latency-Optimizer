@@ -26,21 +26,44 @@ def default_bin_root():
 
 
 def find_makensis(explicit: str | None):
-    if explicit:
-        p = Path(explicit).expanduser().resolve()
+    """Find an existing NSIS compiler without downloading or installing anything.
+
+    GitHub's Chocolatey install executes in PowerShell, while the next step runs
+    under MSYS2; their PATH values are not guaranteed to be the same. The release
+    workflow exports the verified native Windows executable as GLO_MAKENSIS.
+    """
+    requested = explicit or os.environ.get("GLO_MAKENSIS", "").strip()
+    if requested:
+        p = Path(requested.strip('"')).expanduser().resolve()
         if p.is_file():
             return p
-        raise FileNotFoundError(f"makensis not found: {p}")
-    found = shutil.which("makensis") or shutil.which("makensis.exe")
-    if found:
+        raise FileNotFoundError(f"makensis not found at explicitly configured path: {p}")
+
+    found = shutil.which("makensis.exe") or shutil.which("makensis")
+    if found and Path(found).is_file():
         return Path(found).resolve()
+
+    candidates = []
     for env_name in ("ProgramFiles(x86)", "ProgramFiles"):
         base = os.environ.get(env_name)
         if base:
-            p = Path(base) / "NSIS" / "makensis.exe"
-            if p.is_file():
-                return p
-    raise FileNotFoundError("makensis was not found. Install NSIS locally or pass --makensis. No dependency was downloaded.")
+            candidates.append(Path(base) / "NSIS" / "makensis.exe")
+    chocolatey = os.environ.get("ChocolateyInstall")
+    if chocolatey:
+        choco = Path(chocolatey)
+        candidates.extend((
+            choco / "bin" / "makensis.exe",
+            choco / "lib" / "nsis" / "tools" / "makensis.exe",
+        ))
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    raise FileNotFoundError(
+        "makensis.exe was not found. Install NSIS and set GLO_MAKENSIS "
+        "or pass --makensis with its complete executable path. "
+        "GitHub Actions must verify Chocolatey's installed NSIS location "
+        "before entering the MSYS2 build step."
+    )
 
 
 def clean_installer_outputs(out: Path) -> None:
@@ -168,6 +191,9 @@ def main():
         raise FileNotFoundError(f"installer icon is missing: {icon}")
     build_dir = args.build_dir.resolve()
     out = args.output_dir.resolve()
+    # Fail before deleting any existing installer or staging any app files.
+    # In CI the absolute NSIS path is passed from the PowerShell preflight.
+    makensis = find_makensis(args.makensis)
 
     # Every installer build starts from a clean staging tree and removes stale
     # GLO installer outputs. This prevents an old successful EXE from being
@@ -180,7 +206,6 @@ def main():
     stage.mkdir(parents=True)
 
     subprocess.run([sys.executable, str(ROOT / "tools" / "package_windows.py"), str(build_dir), str(stage)], check=True)
-    makensis = find_makensis(args.makensis)
     out.mkdir(parents=True, exist_ok=True)
     name = f"GLO-Setup-{release}-x64.exe"; installer = out / name
     script = ROOT / "installer" / "nsis" / "GLO.nsi"

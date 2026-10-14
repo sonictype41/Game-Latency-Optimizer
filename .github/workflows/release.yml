@@ -117,9 +117,34 @@ jobs:
             mingw-w64-x86_64-python
             make
 
-      - name: Install NSIS
+      - name: Install and verify NSIS (native Windows path)
         shell: pwsh
-        run: choco install nsis -y --no-progress
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install nsis -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Chocolatey NSIS installation failed ($LASTEXITCODE)" }
+
+          # Chocolatey and MSYS2 can expose different PATH values. Resolve the
+          # actual native executable here and pass it explicitly to MSYS2.
+          $candidates = @()
+          $command = Get-Command makensis.exe -ErrorAction SilentlyContinue
+          if ($command) { $candidates += $command.Source }
+          if (${env:ProgramFiles(x86)}) { $candidates += (Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe") }
+          if ($env:ProgramFiles) { $candidates += (Join-Path $env:ProgramFiles "NSIS\makensis.exe") }
+          if ($env:ChocolateyInstall) {
+            $candidates += (Join-Path $env:ChocolateyInstall "bin\makensis.exe")
+            $candidates += (Join-Path $env:ChocolateyInstall "lib\nsis\tools\makensis.exe")
+            $chocoPkg = Join-Path $env:ChocolateyInstall "lib\nsis"
+            if (Test-Path $chocoPkg) {
+              $candidates += @(Get-ChildItem $chocoPkg -Filter makensis.exe -File -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+            }
+          }
+          $exe = $candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+          if (-not $exe) { throw "NSIS was installed, but makensis.exe could not be located" }
+          & $exe /VERSION
+          if ($LASTEXITCODE -ne 0) { throw "makensis.exe verification failed ($LASTEXITCODE): $exe" }
+          "GLO_MAKENSIS=$exe" >> $env:GITHUB_ENV
+          Write-Host "Verified NSIS compiler: $exe"
 
       - name: Fetch pinned Wintun
         run: python ./tools/fetch_wintun.py
@@ -132,6 +157,7 @@ jobs:
           python -m unittest
           tests.test_windows_resource_contract
           tests.test_windows_installer_contract
+          tests.test_nsis_discovery_contract
           tests.test_windows_client_contract
           tests.test_frontend_cpp_structure
           tests.test_brand_policy
@@ -145,7 +171,7 @@ jobs:
         run: python ./tools/package_windows.py bin/app build/release/windows-portable
 
       - name: Build Windows installer
-        run: python ./tools/build_installer.py --build-dir bin/app --output-dir bin/installer
+        run: python ./tools/build_installer.py --build-dir bin/app --output-dir bin/installer --makensis "$GLO_MAKENSIS"
 
       - name: Create portable ZIP
         shell: pwsh
