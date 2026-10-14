@@ -41,6 +41,7 @@ jobs:
           tests.test_windows_resource_contract
           tests.test_windows_installer_contract
           tests.test_windows_client_contract
+          tests.test_frontend_cpp_structure
           tests.test_brand_policy
           tests.test_build_cache_contract
 

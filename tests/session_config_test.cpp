@@ -16,11 +16,19 @@ int main(){
   // The parser is still strict for unsupported games.
   vg.replace(vg.find("\"game\":\"valorant\""),std::string("\"game\":\"valorant\"").size(),"\"game\":\"not-supported\"");
   assert(!glo::parse_session_config_json(vg,c,e));
+  auto complex=good;
+  complex.replace(complex.find("\"schema\":2"),std::string("\"schema\":2").size(),"\"schema\":3");
+  complex.insert(complex.size()-1,",\"udp_port_rules\":\"7000-8000,8181\"");
+  assert(glo::parse_session_config_json(complex,c,e));
+  assert(c.port_rules.size()==2 && glo::udp_port_allowed(c.port_rules,8181) && !glo::udp_port_allowed(c.port_rules,8182));
+  assert(!glo::parse_session_config_json(complex.substr(0,complex.size()-1)+",\"unknown\":1}",c,e));
+  std::string portable;
+  assert(glo::unwrap_session_config_api_response("{\"ok\":true,"+complex.substr(1),portable,e));
+  assert(glo::parse_session_config_json(portable,c,e)&&c.port_rules.size()==2);
   auto bad=good; bad.insert(bad.size()-1,",\"issuer_seed_file\":\"C:/secret\"");
   assert(!glo::parse_session_config_json(bad,c,e));
 
   const std::string enveloped="{\"ok\":true,"+good.substr(1);
-  std::string portable;
   assert(!glo::parse_session_config_json(enveloped,c,e));
   assert(glo::unwrap_session_config_api_response(enveloped,portable,e));
   assert(glo::parse_session_config_json(portable,c,e));
