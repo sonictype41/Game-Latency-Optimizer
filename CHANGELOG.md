@@ -1,22 +1,5 @@
 # Changelog — public OSS releases only
 
-## [0.0.5-r2-beta] - 2026-10-14
-
-### Added
-- UDP Port Rule Expressions for individual ports, several ranges, and mixed rules, such as `7000-8000,8181`. Validate, sort and merge overlaps/adjacent ranges; enforce a maximum of 32 entries and valid UDP ports (1–65535).
-- Strict schema 3 session config support for multiple UDP ranges, including end-to-end forwarding through the Windows network worker IPC and Wintun. Schema 2 single-range sessions continue to work.
-- Responsive handoff status UI with progress spinner for provider inspection, relay measurement and redeeming a session; Cancel prevents late responses from starting a connection.
-
-### Fixed
-- Win32 UI stalls / apparent Not Responding while HTTPS inspection, candidate RTT probes or redemption were running inside the window message procedure.
-- New URI handoffs return quickly from the single-instance message handler instead of waiting for provider network calls.
-- Noncontiguous allowlisted UDP ports no longer require opening the entire enclosing port span. An explicitly allowlisted port (such as 8181) is forwarded through the relay, not bypassed directly.
-
-### Notes and limitations
-- The provider must publish corresponding relay policy entries for every new port rule. An older OSS client cannot interpret schema 3 and needs upgrading before using a multi-rule profile.
-- As before, Windows Wintun /32 host routes affect other protocols/ports destined for the same IPv4 hosts; traffic not allowlisted for relay is not transparently redirected to Direct.
-- Cancellation ignores late results but may not interrupt an already running HTTPS request immediately. Windows GUI/relay integration testing is recommended before broad release.
-
 ## [0.0.5-r1-beta] - 2026-10-13
 
 ### Changed

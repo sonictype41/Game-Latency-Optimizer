@@ -466,7 +466,7 @@ void ClientCore::worker(ClientOptions options) {
     std::vector<std::uint32_t> profile_hosts;
     std::string profile_error;
     const std::string ips=options.gameplay_ipv4.empty() ? bundled_profile_hosts(game_profile(options.game_id).key) : options.gameplay_ipv4;
-    if(!parse_profile_hosts(ips,profile_hosts,profile_error)||options.port_rules.empty()||options.port_rules.size()>32){
+    if(!parse_profile_hosts(ips,profile_hosts,profile_error)||options.port_min==0||options.port_min>options.port_max){
         closesocket(sock);WSACleanup();
         publish_connect_error(ClientErrorCode::ProfileRouteInitFailed,"GLO - Invalid game profile",profile_error.empty()?"Invalid UDP profile policy":profile_error);
         return;
@@ -558,7 +558,7 @@ void ClientCore::worker(ClientOptions options) {
     // No WFP interception, no Roblox log tailing, no kernel callout. Route /32s are
     // system-wide; applications reaching one of these same hosts may be affected.
     std::string route_error;
-    if(!tunnel.set_profile_routes(profile_hosts,options.port_rules,route_error)){
+    if(!tunnel.set_profile_routes(profile_hosts,options.port_min,options.port_max,route_error)){
         log.error("ROUTE004","event=profile_install_failed reason="+route_error);
         tunnel.stop();closesocket(sock);WSACleanup();
         publish_connect_error(ClientErrorCode::ProfileRouteInitFailed,"GLO - Routing failed",route_error);

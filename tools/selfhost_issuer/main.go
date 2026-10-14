@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -39,56 +38,6 @@ func decodeKey(raw string, size int) ([]byte, error) {
 	}
 	return b, nil
 }
-
-// Canonicalize the same 1..32 UDP port ranges accepted by the Windows client.
-func normalizeUDPRules(raw string) (string, error) {
-	parts := strings.Split(raw, ",")
-	if len(parts) < 1 || len(parts) > 32 {
-		return "", errors.New("udp-port-rules must contain 1..32 ports/ranges")
-	}
-	type span struct{ lo, hi int }
-	spans := make([]span, 0, len(parts))
-	for _, item := range parts {
-		seg := strings.Split(strings.TrimSpace(item), "-")
-		if len(seg) < 1 || len(seg) > 2 {
-			return "", errors.New("invalid UDP port rule")
-		}
-		lo, e := strconv.Atoi(strings.TrimSpace(seg[0]))
-		if e != nil || lo < 1 || lo > 65535 {
-			return "", errors.New("invalid UDP port")
-		}
-		hi := lo
-		if len(seg) == 2 {
-			hi, e = strconv.Atoi(strings.TrimSpace(seg[1]))
-			if e != nil || hi < lo || hi > 65535 {
-				return "", errors.New("invalid UDP port range")
-			}
-		}
-		spans = append(spans, span{lo, hi})
-	}
-	sort.Slice(spans, func(i, j int) bool { return spans[i].lo < spans[j].lo })
-	merged := []span{}
-	for _, v := range spans {
-		n := len(merged)
-		if n > 0 && v.lo <= merged[n-1].hi+1 {
-			if v.hi > merged[n-1].hi {
-				merged[n-1].hi = v.hi
-			}
-		} else {
-			merged = append(merged, v)
-		}
-	}
-	out := []string{}
-	for _, v := range merged {
-		if v.lo == v.hi {
-			out = append(out, strconv.Itoa(v.lo))
-		} else {
-			out = append(out, fmt.Sprintf("%d-%d", v.lo, v.hi))
-		}
-	}
-	return strings.Join(out, ","), nil
-}
-
 func run(args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: selfhost_issuer gen-issuer | issue; run with -h for each command")
@@ -128,7 +77,6 @@ func run(args []string) error {
 		minutes := fs.Int("session-minutes", 30, "session lifetime 1..180 minutes")
 		redeem := fs.Int("redeem-seconds", 120, "grant redemption window 5..300 seconds")
 		out := fs.String("out", "", "new private session config JSON path")
-		ports := fs.String("udp-port-rules", "", "optional ports/ranges, e.g. 7000-8000,8181 (requires matching relay policy)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -168,14 +116,6 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		portRules := ""
-		if *ports != "" {
-			var ruleErr error
-			portRules, ruleErr = normalizeUDPRules(*ports)
-			if ruleErr != nil {
-				return ruleErr
-			}
-		}
 		now := uint64(time.Now().Unix())
 		var id [16]byte
 		if _, err := rand.Read(id[:]); err != nil {
@@ -188,24 +128,18 @@ func run(args []string) error {
 			return err
 		}
 		config := struct {
-			Schema          int    `json:"schema"`
-			Relay           string `json:"relay"`
-			RelayPublicKey  string `json:"relay_public_key"`
-			Game            string `json:"game"`
-			Grant           string `json:"grant"`
-			TimeoutMessage  string `json:"timeout_message"`
-			ProfileID       string `json:"profile_id"`
-			ProfileRevision int    `json:"profile_revision"`
-			GameplayIPv4    string `json:"gameplay_ipv4"`
-			PortMin         int    `json:"port_min"`
-			PortMax         int    `json:"port_max"`
-			UDPPortRules    string `json:"udp_port_rules,omitempty"`
-		}{2, *relay, hex.EncodeToString(relayRaw), *game, hex.EncodeToString(signed), "Session expired. Generate a new config.", "roblox-sg", 1, "128.116.46.33/32,128.116.50.33/32,128.116.54.33/32,128.116.97.33/32", 49152, 65535, ""}
-		if portRules != "" {
-			// All custom expressions are schema 3, even when they normalize to a single range.
-			config.Schema = 3
-			config.UDPPortRules = portRules
-		}
+			Schema         int    `json:"schema"`
+			Relay          string `json:"relay"`
+			RelayPublicKey string `json:"relay_public_key"`
+			Game           string `json:"game"`
+			Grant          string `json:"grant"`
+			TimeoutMessage string `json:"timeout_message"`
+            ProfileID string `json:"profile_id"`
+            ProfileRevision int `json:"profile_revision"`
+            GameplayIPv4 string `json:"gameplay_ipv4"`
+            PortMin int `json:"port_min"`
+            PortMax int `json:"port_max"`
+		}{2, *relay, hex.EncodeToString(relayRaw), *game, hex.EncodeToString(signed), "Session expired. Generate a new config.","roblox-sg",1,"128.116.46.33/32,128.116.50.33/32,128.116.54.33/32,128.116.97.33/32",49152,65535}
 		data, err := json.MarshalIndent(config, "", "  ")
 		if err != nil {
 			return err

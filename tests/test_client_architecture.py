@@ -28,7 +28,7 @@ class V0122ClientArchitecture(unittest.TestCase):
 
     def test_config_contract_forbids_filesystem_and_auth_fields(self):
         src=(ROOT/'app/core/src/session_config.cpp').read_text(encoding='utf-8')
-        self.assertIn('allowed={"schema","relay","relay_name","relay_public_key","game","grant","timeout_message","profile_id","profile_revision","gameplay_ipv4","port_min","port_max","udp_port_rules"}',src)
+        self.assertIn('allowed={"schema","relay","relay_name","relay_public_key","game","grant","timeout_message","profile_id","profile_revision","gameplay_ipv4","port_min","port_max"}',src)
         self.assertIn('Unsupported config field',src)
 
     def test_profile_router_has_no_wfp_gate(self):

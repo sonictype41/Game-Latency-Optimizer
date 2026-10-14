@@ -12,7 +12,6 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
-#include <memory>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -140,7 +139,7 @@ struct WintunTunnel::Impl {
     std::vector<Ipv4Cidr> routes;
     std::vector<MIB_IPFORWARD_ROW2> route_rows;
     std::uint64_t route_generation{1};
-    std::atomic<std::shared_ptr<const UdpPortRanges>> game_port_rules{std::make_shared<const UdpPortRanges>(UdpPortRanges{{49152,65535}})};
+    std::atomic<std::uint16_t> game_port_min{49152},game_port_max{65535};
 
     std::uint64_t session_id{};
     SendControlFn control_sender;
@@ -524,7 +523,7 @@ struct WintunTunnel::Impl {
                             // profile. Do not turn unrelated UDP on the same IP into
                             // tunnel traffic. Gameplay may move among high ports on the
                             // same host, so every profile-valid port remains accepted.
-                            if (!udp_port_allowed(*game_port_rules.load(std::memory_order_acquire),dst_port)) {
+                            if (!(dst_port>=game_port_min.load(std::memory_order_relaxed) && dst_port<=game_port_max.load(std::memory_order_relaxed))) {
                                 count(active_route.generation, d_wrong_port);
                                 auto seen = non_game_notified_generation.load(std::memory_order_relaxed);
                                 if (seen != active_route.generation &&
@@ -729,13 +728,12 @@ void WintunTunnel::clear_routes() {
 }
 
 bool WintunTunnel::set_profile_routes(const std::vector<std::uint32_t>& hosts,
-                                      const UdpPortRanges& port_rules,std::string& error) {
+                                      std::uint16_t port_min,std::uint16_t port_max,std::string& error) {
     if (!running_ || !impl_) { error="Wintun is not active";return false; }
-    if(hosts.empty()||hosts.size()>32||port_rules.empty()||port_rules.size()>32){error="Invalid profile route set";return false;}
+    if(hosts.empty()||hosts.size()>32||!port_min||port_min>port_max){error="Invalid profile route set";return false;}
     std::vector<Ipv4Cidr> exact;exact.reserve(hosts.size());
     for(auto ip:hosts) exact.push_back(host_route(ip));
-    for(auto [lo,hi]:port_rules)if(lo==0||lo>hi){error="Invalid UDP Port Rules";return false;}
-    impl_->game_port_rules.store(std::make_shared<const UdpPortRanges>(port_rules),std::memory_order_release);
+    impl_->game_port_min.store(port_min);impl_->game_port_max.store(port_max);
     if(!impl_->install_routes(exact,error)){route_active_=false;return false;}
     for(auto ip:hosts){std::string verify;if(!impl_->route_selected_for_host(ip,verify)){
         impl_->clear_routes();route_active_=false;error="Windows did not select Wintun for "+ipv4_text(ip)+": "+verify;return false;

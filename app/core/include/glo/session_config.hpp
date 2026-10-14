@@ -1,5 +1,4 @@
 #pragma once
-#include "glo/udp_port_rules.hpp"
 
 #include "glo/game_profile.hpp"
 
@@ -20,7 +19,6 @@ struct SessionConfig {
     std::string gameplay_ipv4;
     std::uint64_t profile_revision{1};
     std::uint16_t port_min{49152}, port_max{65535};
-    UdpPortRanges port_rules{{49152,65535}};
     std::vector<std::uint8_t> grant;
     std::string timeout_message{"Session expired."};
 };
