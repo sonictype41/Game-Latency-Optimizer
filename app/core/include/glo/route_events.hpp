@@ -40,6 +40,7 @@ enum class RouteEventType {
     TunnelStopped,
     RelayUnavailable,
     RelayRejected,
+    IdleFlowsEvicted,
     Disconnect,
 };
 
@@ -143,6 +144,9 @@ struct RouteEvent {
     std::uint8_t ip_protocol{0};
     std::uint16_t relay_reject_reason{0};
     std::uint32_t relay_flow_id{0};
+    std::uint64_t flows_removed{0};
+    std::uint64_t flows_remaining{0};
+    std::uint64_t flows_total_evicted{0};
 };
 
 // Single-consumer queue for routing-control events. Producers are the Wintun packet thread and relay receive path.

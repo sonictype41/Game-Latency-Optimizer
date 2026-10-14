@@ -27,12 +27,16 @@ enum class WintunEventType {
     FirstForwarded,
     NonGameTrafficDropped,
     StoppedUnexpectedly,
+    IdleFlowsEvicted,
 };
 
 struct WintunEvent {
     WintunEventType type{WintunEventType::StoppedUnexpectedly};
     WintunFlowIdentity flow{};
     std::uint8_t ip_protocol{0};
+    std::uint64_t flows_removed{0};
+    std::uint64_t flows_remaining{0};
+    std::uint64_t flows_total_evicted{0};
 };
 
 // Aggregated for the currently installed exact /32 route; no payloads or tokens.

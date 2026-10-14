@@ -11,6 +11,7 @@ This guide distinguishes **control plane reachability**, **Windows routing**, an
 | `ROUTE008` exists but no `ROUTE009` | Data sender succeeded, reverse not verified | Compare relay `SESS005`, flow counters, reply path and timing |
 | UI says waiting for gameplay | Control connected but no `RelayLocked` flow | Inspect above logs; do not equate the UI string with Roblox inactivity |
 | Relay `gameplay_sessions=0` | `control_sessions` nonzero but `flows_opened` not advancing | Determine whether `ROUTE008` ever occurs; inspect client path before blaming game server |
+| `FLOW010 temporary` and tunnel remains relayed (r3) | `flow_id`, Relay `RELAY007`, `ENG001 active_flows` | Check per-session active-flow quota and relay rate limiting; a single rejected flow must not trigger whole-route fail-open |
 | Latency or loss after route locks | `QUAL001`, `DATA001`, `LIMIT001` | Check relay egress shaping/drop counters and upstream conditions; avoid masking losses with longer verification timeout |
 | Different source/IP per provider | Manual config imports | Treat unknown/self-host issuers as untrusted; only import intentional configs |
 

@@ -1,5 +1,21 @@
 # Changelog — public OSS releases only
 
+## [0.0.5-r3-beta] - 2026-10-14
+
+### Fixed
+- Isolated flow-scoped `RelayRejectReason::Temporary` responses from session-level transport failure. A temporary rejection of one nonzero Flow ID now retains the existing relay route and can be retried naturally by subsequent packets; it no longer causes whole-session `ROUTE026` fail-open. Session-capacity and maintenance rejection still fail-open, with accurately classified reasons.
+- Windows Wintun local UDP tuple mappings are reclaimed after 60 seconds of inactivity in **both** traffic directions, with a periodic five-second sweep. Route teardown continues clearing local state, and flow IDs remain monotonic for a relay session (not constrained by `max-flows-per-session`).
+- Separated actual heartbeat loss and unexpected Wintun shutdown in fail-open logs, avoiding misleading `relay_unavailable` for every rejection.
+
+### Added
+- `FLOW010` rejection diagnostics with rejection reason, Flow ID and action; `FLOW011` aggregated local idle cleanup telemetry with remaining local flows. No game payloads, tokens or private provider information are logged.
+- Portable C++ policy tests and source-level regression checks for flow timeout/rejection and unaffected real transport fail-open.
+
+### Notes and limitations
+- `VERSION=0.0.5` wire compatibility and current session schemas remain unchanged; compatible OSS relays and self-host sessions require no upgrade for this client-only behavior.
+- Local idle tuple eviction does not change relay socket GC settings. If a relay rejects a flow for being over quota, that specific flow may still lose packets; the tunnel stays available for other flows. Real heartbeat loss and Wintun failures still fail-open.
+- Windows/Vanguard live regression testing is required before broad release.
+
 ## [0.0.5-r2-beta] - 2026-10-14
 
 ### Added

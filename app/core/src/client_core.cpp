@@ -11,6 +11,7 @@
 #include "glo/route_scope.hpp"
 
 #include "glo/route_events.hpp"
+#include "glo/flow_lifecycle.hpp"
 #include "glo/client_log.hpp"
 #include "glo/wintun_tunnel.hpp"
 
@@ -500,6 +501,12 @@ void ClientCore::worker(ClientOptions options) {
             case WintunEventType::StoppedUnexpectedly:
                 event.type = RouteEventType::TunnelStopped;
                 break;
+            case WintunEventType::IdleFlowsEvicted:
+                event.type = RouteEventType::IdleFlowsEvicted;
+                event.flows_removed = e.flows_removed;
+                event.flows_remaining = e.flows_remaining;
+                event.flows_total_evicted = e.flows_total_evicted;
+                break;
         }
         route_events.push(std::move(event));
     };
@@ -663,12 +670,36 @@ void ClientCore::worker(ClientOptions options) {
                 log.warn("WINTUN006","event=non_game_packet_dropped protocol="+std::to_string(ev.ip_protocol)+
                          (ev.flow ? " destination_host="+std::to_string(ev.flow->remote_ipv4_host)+
                          " destination_port="+std::to_string(ev.flow->remote_port) : ""),std::chrono::seconds(10));
-            }else if(ev.type==RouteEventType::RelayUnavailable || ev.type==RouteEventType::TunnelStopped || ev.type==RouteEventType::RelayRejected){
-                if(verify_deadline)log.warn("VERIFY006","event=interrupted reason=relay_unavailable"+stats());
+            }else if(ev.type==RouteEventType::IdleFlowsEvicted){
+                log.info("FLOW011", "event=idle_evicted removed="+std::to_string(ev.flows_removed)+
+                         " remaining="+std::to_string(ev.flows_remaining)+
+                         " total_evicted="+std::to_string(ev.flows_total_evicted)+
+                         " idle_timeout_s="+std::to_string(ClientFlowIdlePolicy::kIdleMs / 1000));
+            }else if(ev.type==RouteEventType::RelayRejected){
+                const auto reason = static_cast<protocol::RelayRejectReason>(ev.relay_reject_reason);
+                const bool flow_local = classify_relay_reject(reason, ev.relay_flow_id) == RelayRejectAction::KeepTunnel;
+                log.warn("FLOW010", "event=relay_rejected reason="+std::string(protocol::relay_reject_name(reason))+
+                         " flow_id="+std::to_string(ev.relay_flow_id)+
+                         " action="+(flow_local ? "keep_tunnel" : "fail_open_admission"),std::chrono::seconds(2));
+                if (flow_local) continue;  // A rejected flow is not a dead session.
+                const auto direct_reason = reason == protocol::RelayRejectReason::Capacity ? DirectReason::CapacityFull :
+                                           reason == protocol::RelayRejectReason::Maintenance ? DirectReason::Maintenance :
+                                           DirectReason::RelayUnavailable;
+                if(verify_deadline)log.warn("VERIFY006","event=interrupted reason=relay_admission"+stats());
+                finish_diagnostics();
+                direct_locked=true;tunnel.clear_routes();routed_gameplay_host=0;route_state=RouteControlState::DirectLocked;
+                set_route_ui(ActiveRoute::Direct);set_direct_reason(direct_reason);
+                log.warn("ROUTE026","event=fail_open reason=relay_admission reject="+
+                         std::string(protocol::relay_reject_name(reason))+" flow_id="+
+                         std::to_string(ev.relay_flow_id),std::chrono::seconds(2));
+                publish(ConnectionState::Direct,"In game - Direct");verify_deadline.reset();
+            }else if(ev.type==RouteEventType::RelayUnavailable || ev.type==RouteEventType::TunnelStopped){
+                const std::string reason = ev.type==RouteEventType::TunnelStopped ? "wintun_stopped" : "heartbeat_timeout";
+                if(verify_deadline)log.warn("VERIFY006","event=interrupted reason="+reason+stats());
                 finish_diagnostics();
                 direct_locked=true;tunnel.clear_routes();routed_gameplay_host=0;route_state=RouteControlState::DirectLocked;
                 set_route_ui(ActiveRoute::Direct);set_direct_reason(DirectReason::RelayUnavailable);
-                log.warn("ROUTE026","event=fail_open reason=relay_unavailable",std::chrono::seconds(2));
+                log.warn("ROUTE026","event=fail_open reason="+reason,std::chrono::seconds(2));
                 publish(ConnectionState::Direct,"In game - Direct");verify_deadline.reset();
             }
         }

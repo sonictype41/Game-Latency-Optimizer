@@ -14,6 +14,7 @@ Diagnostic counters are collected **only during relay verification while Debug l
 | `PROC` | Game process detection/lifecycle | `PROC002` |
 | `ROUTE` | Exact Windows route, relay verification, fail-open | `ROUTE007`, `ROUTE008`, `ROUTE009`, `ROUTE016` |
 | `VERIFY` | First-flow timing and reverse-flow proof | `VERIFY001`, `VERIFY005`, `VERIFY006` |
+| `FLOW` | Per-flow admission errors and client idle cleanup (r3) | `FLOW010`, `FLOW011` |
 | `NET` | Local socket delivery of encapsulated gameplay | `NET005` (socket configuration), `NET006` (verification send summary) |
 | `QUAL`, `TELEM` | Quality statistics after relay lock | `QUAL001`, `TELEM001` |
 
@@ -50,6 +51,15 @@ WARN code=ROUTE016 event=fail_open reason=relay_verification_timeout
 `ROUTE008` / `c2s_ok` prove successful client **local socket writes**, not delivery to the relay or the game. `FLOW006` proves a successful relay UDP socket write, not acceptance by Riot. `FLOW004 first_game_rx` proves that the relay did receive a response from the game's socket. `VERIFY004` proves successful local Wintun injection; `VERIFY005` proves that the routing worker matched the correct flow/route epoch. A session can have a slow first response without the gameplay RTT itself being slow. A relay that never returns gameplay still fails open after the deadline.
 
 Only counter summaries are recorded, not raw game traffic. The `VERIFY000` endpoint and `VERIFY001` IP/ports are potentially identifying diagnostics; redact these before sharing externally. Cross-machine correlation may use the debug-only session/flow IDs. There is no wire-protocol or WFP change.
+
+## OSS 0.0.5-r3-beta: flow rejection vs transport loss
+
+- `FLOW010 event=relay_rejected reason=temporary flow_id=N action=keep_tunnel` means **one flow** was rejected by relay admission, not the whole session. It can retry when the game sends the next packet; its packets may still be lost while the relay remains at capacity.
+- `FLOW010 ... action=fail_open_admission` means a non-temporary or unscoped relay rejection; the client falls back to Direct with `ROUTE026 reason=relay_admission`.
+- `FLOW011 event=idle_evicted removed=N remaining=M total_evicted=T idle_timeout_s=60` records local Wintun tuple-map cleanup, not relay UDP socket count. Local sweeps run approximately every five seconds and count activity in both directions.
+- `ROUTE026 reason=heartbeat_timeout` / `reason=wintun_stopped` differentiate transport failure from admission failure. Actual relay heartbeat/Wintun failures still fail open to Direct.
+
+Do not equate a high sequential Flow ID with `active_flows`. Relay `ENG001 active_flows` is the authoritative live session-flow count, and `GC001` reports server-side socket reclamation. `max-flows-per-session` limits simultaneous flows, not the numeric Flow ID.
 
 ## Safe incident workflow
 

@@ -75,6 +75,10 @@ add_executable(glo_route_events_test tests/route_events_test.cpp)
 target_include_directories(glo_route_events_test PRIVATE app/core/include)
 add_test(NAME glo_route_events_test COMMAND glo_route_events_test)
 
+add_executable(glo_flow_lifecycle_test tests/flow_lifecycle_test.cpp)
+target_include_directories(glo_flow_lifecycle_test PRIVATE app/core/include protocol/include)
+add_test(NAME glo_flow_lifecycle_test COMMAND glo_flow_lifecycle_test)
+
 
 add_executable(glo_log_rotation_test tests/log_rotation_test.cpp)
 target_include_directories(glo_log_rotation_test PRIVATE app/core/include)

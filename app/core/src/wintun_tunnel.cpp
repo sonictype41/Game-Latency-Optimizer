@@ -1,4 +1,5 @@
 #include "glo/wintun_tunnel.hpp"
+#include "glo/flow_lifecycle.hpp"
 
 #include <windows.h>
 #include <winsock2.h>
@@ -190,6 +191,7 @@ struct WintunTunnel::Impl {
         std::uint32_t remote_ip_host{};
         std::uint16_t remote_port{};
         std::uint64_t route_epoch{};
+        std::uint64_t last_activity_ms{};
     };
     struct FlowTuple {
         std::uint16_t local_port{};
@@ -217,6 +219,41 @@ struct WintunTunnel::Impl {
     std::unordered_set<std::uint32_t> forward_notified_flows;
     std::uint32_t next_flow{1};
     std::uint64_t next_data_sequence{1};
+    std::uint64_t last_flow_sweep_ms{0};
+    std::uint64_t total_idle_evicted{0};
+
+    // Called on the Wintun receive thread, including its idle wakeups. Do not
+    // transmit FLOW_CLOSE for these tuples: stock relay GC already closes idle
+    // egress sockets, and one game discovery burst should not cause 100 control
+    // packets a minute later. Explicit route removal still sends FLOW_CLOSE.
+    void sweep_idle_flows(std::uint64_t now_ms) {
+        if (last_flow_sweep_ms != 0 && now_ms >= last_flow_sweep_ms &&
+            now_ms - last_flow_sweep_ms < ClientFlowIdlePolicy::kSweepMs) return;
+        last_flow_sweep_ms = now_ms;
+        std::size_t removed = 0;
+        std::size_t remaining = 0;
+        {
+            std::scoped_lock lock(flows_mu);
+            removed = evict_idle_local_flows(
+                flow_local, tuple_to_flow, forward_notified_flows, now_ms,
+                [](const LocalFlow& flow) {
+                    return FlowTuple{flow.port, flow.local_ip_host,
+                                     flow.remote_ip_host, flow.remote_port};
+                });
+            remaining = flow_local.size();
+        }
+        if (removed != 0) {
+            total_idle_evicted += removed;
+            if (event_fn) {
+                WintunEvent ev;
+                ev.type = WintunEventType::IdleFlowsEvicted;
+                ev.flows_removed = removed;
+                ev.flows_remaining = remaining;
+                ev.flows_total_evicted = total_idle_evicted;
+                event_fn(ev);  // Always outside flows_mu.
+            }
+        }
+    }
 
     bool load(const std::string& path, std::string& error) {
         const auto wpath = resolve_dll_path(path);
@@ -449,20 +486,21 @@ struct WintunTunnel::Impl {
         const FlowTuple key{local_port, local_ip_host, remote_ip_host, remote_port};
         auto it = tuple_to_flow.find(key);
         if (it != tuple_to_flow.end()) {
-            flow_local[it->second] = LocalFlow{local_port, local_ip_host, remote_ip_host, remote_port, route_epoch};
+            flow_local[it->second] = LocalFlow{local_port, local_ip_host, remote_ip_host, remote_port, route_epoch, steady_now_ms()};
             return it->second;
         }
 
         std::uint32_t id = next_flow++;
         while (id == 0 || flow_local.contains(id)) id = next_flow++;
         tuple_to_flow[key] = id;
-        flow_local[id] = LocalFlow{local_port, local_ip_host, remote_ip_host, remote_port, route_epoch};
+        flow_local[id] = LocalFlow{local_port, local_ip_host, remote_ip_host, remote_port, route_epoch, steady_now_ms()};
         return id;
     }
 
     void run() {
         HANDLE event = get_read_event(session);
         while (!stop.load()) {
+            sweep_idle_flows(steady_now_ms());
             DWORD size = 0;
             BYTE* packet = receive_packet(session, &size);
             if (!packet) {
@@ -603,6 +641,9 @@ struct WintunTunnel::Impl {
             std::scoped_lock lock(flows_mu);
             const auto it = flow_local.find(flow_id);
             if (it == flow_local.end()) return false;
+            // A reverse packet keeps an otherwise receive-only UDP tuple alive.
+            // Touch while locked so the sweep cannot evict it mid-lookup.
+            it->second.last_activity_ms = steady_now_ms();
             local = it->second;
         }
 
@@ -692,6 +733,8 @@ bool WintunTunnel::arm(const std::string& dll_path,
     impl_->last_forwarded_host = 0;
     impl_->last_forwarded_at_ms = 0;
     impl_->next_data_sequence = 1;
+    impl_->last_flow_sweep_ms = 0;
+    impl_->total_idle_evicted = 0;
     if (!impl_->load(dll_path, error) || !impl_->configure_base(error)) {
         impl_->cleanup();
         return false;
