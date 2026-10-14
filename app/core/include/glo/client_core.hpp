@@ -1,4 +1,5 @@
 #pragma once
+#include "glo/udp_port_rules.hpp"
 
 #include "glo/game_detector.hpp"
 #include "glo/game_profile.hpp"
@@ -92,6 +93,7 @@ struct ClientOptions {
     std::string gameplay_ipv4;
     std::uint64_t profile_revision{1};
     std::uint16_t port_min{49152}, port_max{65535};
+    UdpPortRanges port_rules{{49152,65535}};
     std::string game_exe_path; // privileged helper resolves this itself; not config data
     RoutingPolicy routing_policy{RoutingPolicy::RelayPreferred};
     unsigned force_handover_grace_ms{3000};

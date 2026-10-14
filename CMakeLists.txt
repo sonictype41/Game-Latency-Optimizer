@@ -63,6 +63,9 @@ target_compile_definitions(glo_session_config PUBLIC GLO_VERSION="${GLO_VERSION}
 add_executable(glo_session_config_test tests/session_config_test.cpp)
 target_link_libraries(glo_session_config_test PRIVATE glo_session_config)
 add_test(NAME glo_session_config_test COMMAND glo_session_config_test)
+add_executable(glo_udp_port_rules_test tests/udp_port_rules_test.cpp)
+target_include_directories(glo_udp_port_rules_test PRIVATE app/core/include)
+add_test(NAME glo_udp_port_rules_test COMMAND glo_udp_port_rules_test)
 
 add_executable(glo_quality_metrics_test tests/quality_metrics_test.cpp)
 target_include_directories(glo_quality_metrics_test PRIVATE app/core/include)

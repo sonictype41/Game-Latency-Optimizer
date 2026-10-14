@@ -1,4 +1,5 @@
 #pragma once
+#include "glo/udp_port_rules.hpp"
 
 #include "glo/protocol.hpp"
 #include "glo/route_scope.hpp"
@@ -64,7 +65,7 @@ public:
              std::string& error);
 
     // Install a bounded set of verified game-profile IPv4 /32 routes, or clear them.
-    bool set_profile_routes(const std::vector<std::uint32_t>& hosts, std::uint16_t port_min, std::uint16_t port_max, std::string& error);
+    bool set_profile_routes(const std::vector<std::uint32_t>& hosts, const UdpPortRanges& port_rules, std::string& error);
     void clear_routes();
     // Diagnostic counters are active only for the verification window.
     void set_diagnostics_enabled(bool enabled) noexcept;

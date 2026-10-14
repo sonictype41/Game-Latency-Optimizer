@@ -28,6 +28,7 @@
 #include <iterator>
 #include <memory>
 #include <map>
+#include <mutex>
 #include <random>
 #include <optional>
 #include <sstream>
@@ -42,6 +43,7 @@ constexpr UINT WM_GLO_UPDATE = WM_APP + 1;
 constexpr UINT WM_GLO_DISCONNECT_DONE = WM_APP + 2;
 constexpr UINT WM_GLO_SHUTDOWN_DONE = WM_APP + 3;
 constexpr UINT WM_GLO_TRAY = WM_APP + 4;
+constexpr UINT WM_GLO_HANDOFF_DONE = WM_APP + 5;
 constexpr UINT kTrayIconId = 1;
 constexpr UINT kTrayOpenId = 41001;
 constexpr UINT kTrayDisconnectId = 41002;
@@ -65,7 +67,16 @@ enum class ThemeMode { Light, Dark };
 enum class Language { English, Vietnamese };
 enum class UiPage { Main, Settings };
 enum class ActionFeedback { None, Pasted, Imported };
-enum class InAppModal { None, HandoffConfirm, DisconnectConfirm, SelfHosted };
+enum class InAppModal { None, HandoffConfirm, HandoffBusy, DisconnectConfirm, SelfHosted };
+struct HandoffTask {
+    std::atomic_bool cancelled{false},complete{false};
+    std::atomic<int> stage{1}; // 1 inspect, 2 relay RTT, 3 redeem
+    std::mutex mutex;
+    bool connecting{false},trusted{false};
+    std::wstring error,game,source;
+    std::string config_json;
+    std::vector<std::string> probe_logs;
+};
 
 struct Palette {
     COLORREF background, surface, surface_alt, text, muted, border, accent, relay, direct, danger;
@@ -99,6 +110,7 @@ struct UiState {
     ConfigSource config_source{ConfigSource::Manual};
     ActionFeedback action_feedback{ActionFeedback::None};
     InAppModal modal{InAppModal::None};
+    std::shared_ptr<HandoffTask> handoff_task;
     std::wstring pending_handoff_uri;
     std::wstring pending_handoff_game;
     std::wstring pending_handoff_source;
@@ -337,6 +349,19 @@ void paint_in_app_modal(HDC dc,const RECT&client,const Palette&p){
     const int w=client.right,h=client.bottom,card_w=500;
     RECT card{(w-card_w)/2,92,(w+card_w)/2,h-82};rounded_fill(dc,card,p.surface,p.border,18);
     RECT title{card.left+26,card.top+22,card.right-26,card.top+56};
+    if(g_ui->modal==InAppModal::HandoffBusy){
+        draw_text(dc,g_ui->language==Language::Vietnamese?L"Đang xử lý kết nối...":L"Preparing connection...",title,DT_LEFT|DT_VCENTER|DT_SINGLELINE,g_ui->font_title,p.text);
+        int stage=g_ui->handoff_task?g_ui->handoff_task->stage.load():1;
+        const wchar_t* message=stage==1?(g_ui->language==Language::Vietnamese?L"Đang xác minh URI...":L"Inspecting provider link..."):
+           stage==2?(g_ui->language==Language::Vietnamese?L"Đang đo độ trễ relay...":L"Measuring relay latency..."):
+           (g_ui->language==Language::Vietnamese?L"Đang cấp phiên kết nối...":L"Redeeming session...");
+        RECT label{card.left+28,card.top+115,card.right-28,card.top+165};
+        draw_text(dc,message,label,DT_CENTER|DT_VCENTER|DT_SINGLELINE,g_ui->font_body,p.text);
+        RECT spinner{card.left+175,card.top+166,card.right-175,card.top+226};draw_busy_spinner(dc,spinner,p.accent);
+        g_ui->modal_cancel_rect=RECT{card.right-168,card.bottom-64,card.right-28,card.bottom-22};
+        draw_action(dc,g_ui->modal_cancel_rect,g_ui->language==Language::Vietnamese?L"Hủy":L"Cancel",nullptr,p,false,true);
+        return;
+    }
     if(g_ui->modal==InAppModal::HandoffConfirm){
         draw_text(dc,g_ui->language==Language::Vietnamese?L"Xác nhận kết nối":L"Confirm connection",title,DT_LEFT|DT_VCENTER|DT_SINGLELINE,g_ui->font_title,p.text);
         RECT game_l{card.left+28,card.top+78,card.left+120,card.top+104};draw_text(dc,L"Game",game_l,DT_LEFT|DT_VCENTER|DT_SINGLELINE,g_ui->font_label,p.muted);
@@ -382,7 +407,7 @@ void set_action_feedback(ActionFeedback feedback){
 bool read_text_file(const std::filesystem::path& path,std::string& out,std::string& error){std::ifstream in(path,std::ios::binary);if(!in){error="Could not open config file";return false;}in.seekg(0,std::ios::end);const auto n=in.tellg();if(n<0||n>65536){error="Config file is too large";return false;}in.seekg(0);out.assign(std::istreambuf_iterator<char>(in),{});return true;}
 bool clipboard_text(std::string&out,std::string&error){if(!OpenClipboard(g_ui?g_ui->window:nullptr)){error="Clipboard is unavailable";return false;}struct G{~G(){CloseClipboard();}}g;HANDLE h=GetClipboardData(CF_UNICODETEXT);if(!h){error="Clipboard does not contain text";return false;}auto*p=static_cast<const wchar_t*>(GlobalLock(h));if(!p){error="Could not read clipboard";return false;}std::wstring t(p);GlobalUnlock(h);out=narrow(t);if(out.empty()){error="Clipboard config is empty";return false;}return true;}
 
-void apply_config(glo::SessionConfig c,ConfigSource source=ConfigSource::Manual){g_ui->config=std::move(c);g_ui->config_source=source;g_ui->config_consumed=false;const auto&cfg=*g_ui->config;g_ui->options.relay_host=cfg.relay_host;g_ui->options.relay_port=cfg.relay_port;g_ui->options.relay_public_key=cfg.relay_public_key;g_ui->options.session_grant=cfg.grant;g_ui->options.timeout_message=cfg.timeout_message;g_ui->options.game_id=cfg.game_id;g_ui->options.profile_id=cfg.profile_id;g_ui->options.gameplay_ipv4=cfg.gameplay_ipv4;g_ui->options.profile_revision=cfg.profile_revision;g_ui->options.port_min=cfg.port_min;g_ui->options.port_max=cfg.port_max;InvalidateRect(g_ui->window,nullptr,FALSE);}
+void apply_config(glo::SessionConfig c,ConfigSource source=ConfigSource::Manual){g_ui->config=std::move(c);g_ui->config_source=source;g_ui->config_consumed=false;const auto&cfg=*g_ui->config;g_ui->options.relay_host=cfg.relay_host;g_ui->options.relay_port=cfg.relay_port;g_ui->options.relay_public_key=cfg.relay_public_key;g_ui->options.session_grant=cfg.grant;g_ui->options.timeout_message=cfg.timeout_message;g_ui->options.game_id=cfg.game_id;g_ui->options.profile_id=cfg.profile_id;g_ui->options.gameplay_ipv4=cfg.gameplay_ipv4;g_ui->options.profile_revision=cfg.profile_revision;g_ui->options.port_min=cfg.port_min;g_ui->options.port_max=cfg.port_max;g_ui->options.port_rules=cfg.port_rules;InvalidateRect(g_ui->window,nullptr,FALSE);}
 bool parse_and_apply(const std::string&text,ConfigSource source=ConfigSource::Manual){glo::SessionConfig c;std::string error;if(!glo::parse_session_config_json(text,c,error)){MessageBoxW(g_ui->window,widen(error).c_str(),L"GLO - Invalid config",MB_OK|MB_ICONERROR);return false;}apply_config(std::move(c),source);return true;}
 void paste_config(){std::string text,error;if(!clipboard_text(text,error)){MessageBoxW(g_ui->window,widen(error).c_str(),L"GLO",MB_OK|MB_ICONERROR);return;}if(parse_and_apply(text))set_action_feedback(ActionFeedback::Pasted);}
 void import_config(){wchar_t file[32768]{};OPENFILENAMEW ofn{};ofn.lStructSize=sizeof(ofn);ofn.hwndOwner=g_ui->window;ofn.lpstrFilter=L"GLO session config (*.json)\0*.json\0All files\0*.*\0\0";ofn.lpstrFile=file;ofn.nMaxFile=32768;ofn.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;if(!GetOpenFileNameW(&ofn))return;std::string text,error;if(!read_text_file(file,text,error)){MessageBoxW(g_ui->window,widen(error).c_str(),L"GLO",MB_OK|MB_ICONERROR);return;}if(parse_and_apply(text))set_action_feedback(ActionFeedback::Imported);}
@@ -487,7 +512,7 @@ std::vector<RelayCandidate> measure_relay_candidates(std::vector<RelayCandidate>
         std::vector<double> samples;for(int attempt=0;attempt<3;++attempt){if(auto rtt=probe_relay_candidate(c))samples.push_back(*rtt);}
         if(samples.empty())return std::nullopt;std::sort(samples.begin(),samples.end());return samples[samples.size()/2];
     }));}
-    for(std::size_t i=0;i<candidates.size();++i){auto rtt=jobs[i].get();if(rtt)candidates[i].rtt_ms=*rtt;const bool reachable=candidates[i].rtt_ms<1e29;std::string detail="event=candidate_probe candidate="+candidates[i].id+" reachable="+(reachable?std::string("true"):std::string("false"));if(reachable)detail+=" rtt_ms="+std::to_string(candidates[i].rtt_ms);g_ui->app_log.info("URI020",detail);}
+    for(std::size_t i=0;i<candidates.size();++i){auto rtt=jobs[i].get();if(rtt)candidates[i].rtt_ms=*rtt;const bool reachable=candidates[i].rtt_ms<1e29;std::string detail="event=candidate_probe candidate="+candidates[i].id+" reachable="+(reachable?std::string("true"):std::string("false"));if(reachable)detail+=" rtt_ms="+std::to_string(candidates[i].rtt_ms);(void)detail; // Worker thread: never dereference UI state while probing.}
     return candidates;
 }
 
@@ -568,33 +593,134 @@ void self_host_menu(){
 }
 
 
-void perform_handoff_connect(const std::wstring& uri){
-    const auto safe=handoff_uri_safe_summary(uri);auto parsed=parse_handoff_uri(uri);
-    if(!parsed.link){g_ui->app_log.error("URI002",std::string("event=handoff_parse_failed reason=")+handoff_error_name(parsed.error)+" "+safe);return;}
-    auto link=std::move(parsed.link);DWORD status=0;std::string resp;std::wstring err;const std::string inspect="{\"token\":\""+json_escape(link->token)+"\"}";
-    if(!http_post_json(link->endpoint,L"/app/handoff/inspect",inspect,status,resp,err)||status/100!=2){g_ui->app_log.error("URI005","event=handoff_inspect_failed http_status="+std::to_string(status));MessageBoxW(g_ui->window,(err.empty()?(g_ui->language==Language::Vietnamese?L"Liên kết đã hết hạn hoặc provider từ chối yêu cầu.":L"The link expired or the provider rejected it."):err).c_str(),L"GLO - Handoff",MB_OK|MB_ICONERROR);return;}
-    auto game=json_string_field(resp,"game"),returned_issuer=json_string_field(resp,"issuer");auto candidates=json_relay_candidates(resp);if(!game||!returned_issuer||candidates.empty()){g_ui->app_log.error("URI006","event=handoff_metadata_invalid");MessageBoxW(g_ui->window,L"Provider returned invalid handoff candidates.",L"GLO - Handoff",MB_OK|MB_ICONERROR);return;}
-    std::wstring canonical_returned,returned_host;if(!canonical_https_origin(widen(*returned_issuer),canonical_returned,returned_host)||canonical_returned!=link->issuer){g_ui->app_log.error("URI007","event=handoff_identity_mismatch");MessageBoxW(g_ui->window,L"Provider identity mismatch.",L"GLO - Handoff",MB_OK|MB_ICONERROR);return;}
-    std::wstring official,oh;canonical_https_origin(kOfficialWebUrl,official,oh);std::wstring official_api,oah;canonical_https_origin(kOfficialApiOrigin,official_api,oah);bool trusted=link->issuer==official&&link->endpoint==official_api;
-    candidates=measure_relay_candidates(std::move(candidates));const bool any_reachable=std::any_of(candidates.begin(),candidates.end(),[](const RelayCandidate& c){return c.rtt_ms<1e29;});if(!any_reachable){g_ui->app_log.error("URI021","event=candidate_probe_all_failed");MessageBoxW(g_ui->window,g_ui->language==Language::Vietnamese?L"Không có relay nào của provider phản hồi probe.":L"None of the provider relay candidates responded to the probe.",L"GLO - Handoff",MB_OK|MB_ICONERROR);return;}
-    std::string measurements="[";for(std::size_t i=0;i<candidates.size();++i){if(i)measurements+=",";measurements+="{\"candidate_id\":\""+json_escape(candidates[i].id)+"\",\"rtt_ms\":"+(candidates[i].rtt_ms<1e29?std::to_string(candidates[i].rtt_ms):std::string("null"))+"}";}measurements+="]";
-    const std::string nonce=random_nonce();const std::string redeem="{\"token\":\""+json_escape(link->token)+"\",\"client_nonce\":\""+nonce+"\",\"measurements\":"+measurements+"}";resp.clear();err.clear();status=0;if(!http_post_json(link->endpoint,L"/app/handoff/redeem",redeem,status,resp,err)||status/100!=2){g_ui->app_log.warn("URI009","event=handoff_measurements_redeem_failed measured_candidates="+std::to_string(candidates.size())+" http_status="+std::to_string(status));const std::wstring redeem_error=(g_ui->language==Language::Vietnamese?L"Không thể cấp phiên từ các relay đã đo.\n":L"Could not redeem a session from the measured relays.\n")+err;MessageBoxW(g_ui->window,redeem_error.c_str(),L"GLO - Handoff",MB_OK|MB_ICONERROR);return;}g_ui->app_log.info("URI010","event=handoff_redeem_ok measured_candidates="+std::to_string(candidates.size()));std::string config_json,envelope_error;if(!glo::unwrap_session_config_api_response(resp,config_json,envelope_error)){g_ui->app_log.error("URI011","event=handoff_redeem_response_invalid reason="+envelope_error);MessageBoxW(g_ui->window,widen(envelope_error).c_str(),L"GLO - Handoff",MB_OK|MB_ICONERROR);return;}if(parse_and_apply(config_json,trusted?ConfigSource::OfficialHandoff:ConfigSource::ThirdPartyHandoff)){connect_loaded();return;}
-
+// Network work never touches the Win32 UI state. Cancellation invalidates the
+// result and, critically, is checked again before redeeming one-time tickets.
+void run_handoff_task(std::shared_ptr<HandoffTask> task,std::wstring uri,HWND hwnd){
+    auto fail=[&](std::wstring reason){std::scoped_lock lock(task->mutex);task->error=std::move(reason);};
+    try{
+        auto parsed=parse_handoff_uri(uri);
+        if(!parsed.link){fail(L"Invalid or expired GLO URI.");}
+        else {
+            auto link=*parsed.link;
+            DWORD status=0;std::string resp;std::wstring err;
+            const std::string inspect="{\"token\":\""+json_escape(link.token)+"\"}";
+            if(!http_post_json(link.endpoint,L"/app/handoff/inspect",inspect,status,resp,err)||status/100!=2){
+                fail(err.empty()?L"Provider rejected the link or inspect timed out.":err);
+            }else{
+                const auto game=json_string_field(resp,"game"),issuer=json_string_field(resp,"issuer");
+                auto candidates=json_relay_candidates(resp);
+                std::wstring canonical_returned,returned_host,source_host,canonical;
+                if(!game||!issuer||candidates.empty()||
+                   !canonical_https_origin(widen(issuer.value_or("")),canonical_returned,returned_host)||canonical_returned!=link.issuer){
+                    fail(L"Provider returned invalid handoff metadata or mismatched identity.");
+                }else{
+                    canonical_https_origin(link.issuer,canonical,source_host);
+                    std::wstring official,host,official_api,oah;
+                    canonical_https_origin(kOfficialWebUrl,official,host);
+                    canonical_https_origin(kOfficialApiOrigin,official_api,oah);
+                    const bool trusted=link.issuer==official&&link.endpoint==official_api;
+                    {std::scoped_lock lock(task->mutex);task->game=widen(*game);task->source=source_host;task->trusted=trusted;}
+                    if(task->connecting&&!task->cancelled.load()){
+                        task->stage.store(2);
+                        // This waits only in the worker, never in WndProc/message loop.
+                        candidates=measure_relay_candidates(std::move(candidates));
+                        {std::scoped_lock lock(task->mutex);for(const auto& c:candidates){
+                          const bool ok=c.rtt_ms<1e29;
+                          std::string row="event=candidate_probe candidate="+c.id+" reachable="+(ok?"true":"false");
+                          if(ok)row+=" rtt_ms="+std::to_string(c.rtt_ms);
+                          task->probe_logs.push_back(std::move(row));
+                        }}
+                        if(!task->cancelled.load()){
+                            const bool reachable=std::any_of(candidates.begin(),candidates.end(),[](const RelayCandidate& c){return c.rtt_ms<1e29;});
+                            if(!reachable)fail(L"No provider relay candidate responded to measurement.");
+                            else{
+                                std::string measurements="[";
+                                for(std::size_t i=0;i<candidates.size();++i){if(i)measurements+=",";
+                                    measurements+="{\"candidate_id\":\""+json_escape(candidates[i].id)+"\",\"rtt_ms\":"+
+                                        (candidates[i].rtt_ms<1e29?std::to_string(candidates[i].rtt_ms):std::string("null"))+"}";}
+                                measurements+="]";
+                                task->stage.store(3);
+                                const auto redeem="{\"token\":\""+json_escape(link.token)+"\",\"client_nonce\":\""+
+                                    random_nonce()+"\",\"measurements\":"+measurements+"}";
+                                resp.clear();err.clear();status=0;
+                                if(!task->cancelled.load()){
+                                    if(!http_post_json(link.endpoint,L"/app/handoff/redeem",redeem,status,resp,err)||status/100!=2){
+                                        fail(err.empty()?L"Provider could not redeem a session.":err);
+                                    }else{
+                                        std::string json,error;
+                                        if(!glo::unwrap_session_config_api_response(resp,json,error))fail(widen(error));
+                                        else{std::scoped_lock lock(task->mutex);task->config_json=std::move(json);}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }catch(const std::exception& e){fail(widen(e.what()));}
+    task->complete.store(true,std::memory_order_release);
+    // Posted with no heap payload; task owns its result. Stale/cancelled jobs
+    // cannot apply configs or open late confirmation modals.
+    if(!task->cancelled.load())PostMessageW(hwnd,WM_GLO_HANDOFF_DONE,0,0);
 }
 
-void handle_handoff_uri(const std::wstring& uri){
-    const auto safe=handoff_uri_safe_summary(uri);g_ui->app_log.info("URI001","event=handoff_received "+safe);const auto snap=g_ui->client.snapshot();
-    if(snap.phase!=glo::UiPhase::Disconnected||snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load()){g_ui->app_log.warn("URI003","event=handoff_rejected reason=active_connection "+safe);MessageBoxW(g_ui->window,g_ui->language==Language::Vietnamese?L"GLO đang có phiên kết nối. Hãy ngắt kết nối trước khi mở liên kết khác.":L"GLO already has an active connection. Disconnect before opening another link.",L"GLO",MB_OK|MB_ICONINFORMATION);return;}
-    auto parsed=parse_handoff_uri(uri);if(!parsed.link){g_ui->app_log.error("URI002",std::string("event=handoff_parse_failed reason=")+handoff_error_name(parsed.error)+" "+safe);const std::wstring reason=handoff_error_reason(parsed.error);const std::wstring message=(g_ui->language==Language::Vietnamese?L"Không thể mở liên kết GLO này.\nLý do: ":L"Unable to open this GLO link.\nReason: ")+reason;MessageBoxW(g_ui->window,message.c_str(),L"GLO",MB_OK|MB_ICONERROR);return;}
-    auto link=std::move(parsed.link);g_ui->app_log.info("URI004","event=handoff_parse_ok token_present=true token_length="+std::to_string(link->token.size()));DWORD status=0;std::string resp;std::wstring err;const std::string inspect="{\"token\":\""+json_escape(link->token)+"\"}";
-    if(!http_post_json(link->endpoint,L"/app/handoff/inspect",inspect,status,resp,err)||status/100!=2){g_ui->app_log.error("URI005","event=handoff_inspect_failed http_status="+std::to_string(status));MessageBoxW(g_ui->window,(err.empty()?(g_ui->language==Language::Vietnamese?L"Liên kết đã hết hạn hoặc provider từ chối yêu cầu.":L"The link expired or the provider rejected it."):err).c_str(),L"GLO - Handoff",MB_OK|MB_ICONERROR);return;}
-    auto game=json_string_field(resp,"game"),returned_issuer=json_string_field(resp,"issuer");auto candidates=json_relay_candidates(resp);if(!game||!returned_issuer||candidates.empty()){g_ui->app_log.error("URI006","event=handoff_metadata_invalid");MessageBoxW(g_ui->window,L"Provider returned invalid handoff candidates.",L"GLO - Handoff",MB_OK|MB_ICONERROR);return;}
-    std::wstring canonical_returned,returned_host;if(!canonical_https_origin(widen(*returned_issuer),canonical_returned,returned_host)||canonical_returned!=link->issuer){g_ui->app_log.error("URI007","event=handoff_identity_mismatch");MessageBoxW(g_ui->window,L"Provider identity mismatch.",L"GLO - Handoff",MB_OK|MB_ICONERROR);return;}
-    std::wstring source_host,canon;canonical_https_origin(link->issuer,canon,source_host);
-    g_ui->pending_handoff_uri=uri;g_ui->pending_handoff_game=widen(*game);g_ui->pending_handoff_source=source_host;g_ui->modal=InAppModal::HandoffConfirm;
+void cancel_handoff(){
+    if(g_ui->handoff_task)g_ui->handoff_task->cancelled.store(true);
+    g_ui->handoff_task.reset();g_ui->modal=InAppModal::None;
     InvalidateRect(g_ui->window,nullptr,FALSE);
 }
 
+void start_handoff_task(const std::wstring& uri,bool connect){
+    if(g_ui->handoff_task){g_ui->app_log.warn("URI003","event=handoff_rejected reason=busy");return;}
+    auto task=std::make_shared<HandoffTask>();task->connecting=connect;
+    g_ui->handoff_task=task;g_ui->modal=InAppModal::HandoffBusy;
+    InvalidateRect(g_ui->window,nullptr,FALSE);
+    std::thread([task,uri,hwnd=g_ui->window]{run_handoff_task(task,uri,hwnd);}).detach();
+}
+
+void perform_handoff_connect(const std::wstring& uri){start_handoff_task(uri,true);}
+
+void handle_handoff_uri(const std::wstring& uri){
+    const auto safe=handoff_uri_safe_summary(uri);
+    g_ui->app_log.info("URI001","event=handoff_received "+safe);
+    const auto snap=g_ui->client.snapshot();
+    if(g_ui->handoff_task||snap.phase!=glo::UiPhase::Disconnected||snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load()){
+        g_ui->app_log.warn("URI003","event=handoff_rejected reason=busy_or_connected "+safe);return;
+    }
+    auto parsed=parse_handoff_uri(uri);
+    if(!parsed.link){
+        g_ui->app_log.error("URI002",std::string("event=handoff_parse_failed reason=")+handoff_error_name(parsed.error)+" "+safe);
+        MessageBoxW(g_ui->window,handoff_error_reason(parsed.error).c_str(),L"GLO - Invalid URI",MB_OK|MB_ICONERROR);
+        return;
+    }
+    g_ui->app_log.info("URI004","event=handoff_parse_ok token_present=true token_length="+std::to_string(parsed.link->token.size()));
+    g_ui->pending_handoff_uri=uri;
+    start_handoff_task(uri,false);
+}
+
+void finish_handoff_task(HWND hwnd){
+    const auto task=g_ui->handoff_task;
+    if(!task||!task->complete.load(std::memory_order_acquire)||task->cancelled.load())return;
+    std::wstring error,game,source;std::string config;bool trusted=false;
+    {std::scoped_lock lock(task->mutex);error=task->error;game=task->game;source=task->source;config=task->config_json;trusted=task->trusted;}
+    for(const auto& row:task->probe_logs)g_ui->app_log.info("URI020",row);
+    const bool connecting=task->connecting;
+    g_ui->handoff_task.reset();g_ui->modal=InAppModal::None;
+    InvalidateRect(hwnd,nullptr,FALSE);
+    if(!error.empty()){
+        g_ui->app_log.warn("URI005",connecting?"event=handoff_connect_failed":"event=handoff_inspect_failed");
+        MessageBoxW(hwnd,error.c_str(),L"GLO - Handoff",MB_OK|MB_ICONERROR);return;
+    }
+    if(!connecting){
+        g_ui->pending_handoff_game=std::move(game);g_ui->pending_handoff_source=std::move(source);
+        g_ui->modal=InAppModal::HandoffConfirm;
+    }else if(!config.empty()){
+        g_ui->app_log.info("URI010","event=handoff_redeem_ok");
+        if(parse_and_apply(config,trusted?ConfigSource::OfficialHandoff:ConfigSource::ThirdPartyHandoff))connect_loaded();
+    }else MessageBoxW(hwnd,L"Incomplete handoff response.",L"GLO - Handoff",MB_OK|MB_ICONERROR);
+    InvalidateRect(hwnd,nullptr,FALSE);
+}
 
 void begin_disconnect(HWND hwnd){if(g_ui->disconnecting.exchange(true))return;if(g_ui->disconnect_thread.joinable())g_ui->disconnect_thread.join();g_ui->disconnect_thread=std::thread([hwnd]{g_ui->client.disconnect();PostMessageW(hwnd,WM_GLO_DISCONNECT_DONE,0,0);});InvalidateRect(hwnd,nullptr,FALSE);}
 
@@ -859,13 +985,13 @@ void show_tray_menu(HWND hwnd){
 }
 
 LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){case WM_CREATE:g_ui->window=hwnd;g_ui->font_title=make_font(26,FW_BOLD);g_ui->font_hero=make_font(27,FW_BOLD);g_ui->font_body=make_font(14,FW_NORMAL);g_ui->font_label=make_font(11,FW_BOLD);g_ui->font_metric=make_font(18,FW_BOLD);g_ui->font_link=make_font(14,FW_NORMAL,true);g_ui->icon_app_big=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));g_ui->icon_app_small=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_DEFAULTCOLOR));if(g_ui->icon_app_big)SendMessageW(hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(g_ui->icon_app_big));if(g_ui->icon_app_small)SendMessageW(hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(g_ui->icon_app_small));g_ui->icon_settings_light=load_ui_icon(IDI_GLO_SETTINGS_LIGHT);g_ui->icon_settings_dark=load_ui_icon(IDI_GLO_SETTINGS_DARK);g_ui->icon_sun_light=load_ui_icon(IDI_GLO_SUN_LIGHT);g_ui->icon_sun_dark=load_ui_icon(IDI_GLO_SUN_DARK);g_ui->icon_moon_light=load_ui_icon(IDI_GLO_MOON_LIGHT);g_ui->icon_moon_dark=load_ui_icon(IDI_GLO_MOON_DARK);g_ui->icon_back_light=load_ui_icon(IDI_GLO_BACK_LIGHT);g_ui->icon_back_dark=load_ui_icon(IDI_GLO_BACK_DARK);g_ui->icon_official_light=load_ui_icon(IDI_GLO_OFFICIAL_LIGHT);g_ui->icon_official_dark=load_ui_icon(IDI_GLO_OFFICIAL_DARK);g_ui->icon_github_light=load_ui_icon(IDI_GLO_GITHUB_LIGHT);g_ui->icon_github_dark=load_ui_icon(IDI_GLO_GITHUB_DARK);g_ui->icon_facebook_light=load_ui_icon(IDI_GLO_FACEBOOK_LIGHT);g_ui->icon_facebook_dark=load_ui_icon(IDI_GLO_FACEBOOK_DARK);g_ui->icon_paste_light=load_ui_icon(IDI_GLO_PASTE_LIGHT);g_ui->icon_paste_dark=load_ui_icon(IDI_GLO_PASTE_DARK);g_ui->icon_import_light=load_ui_icon(IDI_GLO_IMPORT_LIGHT);g_ui->icon_import_dark=load_ui_icon(IDI_GLO_IMPORT_DARK);g_ui->icon_connect_light=load_ui_icon(IDI_GLO_CONNECT_LIGHT);g_ui->icon_connect_dark=load_ui_icon(IDI_GLO_CONNECT_DARK);g_ui->icon_disconnect_light=load_ui_icon(IDI_GLO_DISCONNECT_LIGHT);g_ui->icon_disconnect_dark=load_ui_icon(IDI_GLO_DISCONNECT_DARK);g_ui->icon_tray_connected=make_connected_tray_icon(g_ui->icon_app_small);update_tray_icon(true);SetTimer(hwnd,42,250,nullptr);return 0;
-    case WM_COPYDATA:{auto*cds=reinterpret_cast<COPYDATASTRUCT*>(lp);if(!cds||cds->dwData!=kHandoffCopyData||!cds->lpData||cds->cbData<sizeof(wchar_t)||cds->cbData>16384)return FALSE;std::wstring uri(static_cast<const wchar_t*>(cds->lpData));ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);handle_handoff_uri(uri);return TRUE;}
-    case WM_TIMER:if(wp==42){const auto snap=g_ui->client.snapshot();bool repaint=snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load();if(g_ui->action_feedback!=ActionFeedback::None){if(GetTickCount64()>=g_ui->action_feedback_until_ms){g_ui->action_feedback=ActionFeedback::None;g_ui->action_feedback_until_ms=0;}repaint=true;}if(repaint)InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon();check_session_warnings(snap);return 0;}break;
+    case WM_COPYDATA:{auto*cds=reinterpret_cast<COPYDATASTRUCT*>(lp);if(!cds||cds->dwData!=kHandoffCopyData||!cds->lpData||cds->cbData<sizeof(wchar_t)||cds->cbData>16384)return FALSE;if(cds->cbData%sizeof(wchar_t))return FALSE;auto* begin=static_cast<const wchar_t*>(cds->lpData);auto* end=std::find(begin,begin+cds->cbData/sizeof(wchar_t),L'\0');if(end==begin+cds->cbData/sizeof(wchar_t))return FALSE;std::wstring uri(begin,end);ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);handle_handoff_uri(uri);return TRUE;}
+    case WM_TIMER:if(wp==42){const auto snap=g_ui->client.snapshot();bool repaint=snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load()||g_ui->modal==InAppModal::HandoffBusy;if(g_ui->action_feedback!=ActionFeedback::None){if(GetTickCount64()>=g_ui->action_feedback_until_ms){g_ui->action_feedback=ActionFeedback::None;g_ui->action_feedback_until_ms=0;}repaint=true;}if(repaint)InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon();check_session_warnings(snap);return 0;}break;
     case WM_PAINT:{PAINTSTRUCT ps{};HDC dc=BeginPaint(hwnd,&ps);paint_ui(hwnd,dc);EndPaint(hwnd,&ps);return 0;}case WM_ERASEBKGND:return 1;
     case WM_SETCURSOR:if(LOWORD(lp)==HTCLIENT){POINT pt{};GetCursorPos(&pt);ScreenToClient(hwnd,&pt);if(g_ui->modal!=InAppModal::None){const bool hot=point_in(g_ui->modal_cancel_rect,pt)||point_in(g_ui->modal_primary_rect,pt)||point_in(g_ui->modal_uri_rect,pt)||point_in(g_ui->modal_paste_rect,pt)||point_in(g_ui->modal_import_rect,pt);if(hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}break;}const bool common=point_in(g_ui->official_rect,pt)||point_in(g_ui->github_rect,pt)||point_in(g_ui->facebook_rect,pt)||point_in(g_ui->theme_rect,pt);const bool page_hot=g_ui->page==UiPage::Settings?(point_in(g_ui->back_rect,pt)||point_in(g_ui->language_en_rect,pt)||point_in(g_ui->language_vi_rect,pt)||point_in(g_ui->debug_toggle_rect,pt)||point_in(g_ui->debug_log_link_rect,pt)):(point_in(g_ui->settings_rect,pt)||point_in(g_ui->paste_rect,pt)||point_in(g_ui->import_rect,pt)||point_in(g_ui->connect_rect,pt)||point_in(g_ui->how_to_use_rect,pt)||point_in(g_ui->relay_eye_rect,pt));if(common||page_hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}}break;
     case WM_LBUTTONUP:{
         if(g_ui->modal!=InAppModal::None){
-            if(point_in(g_ui->modal_cancel_rect,lp)){g_ui->modal=InAppModal::None;InvalidateRect(hwnd,nullptr,FALSE);return 0;}
+            if(point_in(g_ui->modal_cancel_rect,lp)){if(g_ui->modal==InAppModal::HandoffBusy)cancel_handoff();else{g_ui->modal=InAppModal::None;InvalidateRect(hwnd,nullptr,FALSE);}return 0;}
             if(g_ui->modal==InAppModal::HandoffConfirm&&point_in(g_ui->modal_primary_rect,lp)){
                 const std::wstring uri=g_ui->pending_handoff_uri;g_ui->modal=InAppModal::None;g_ui->pending_handoff_uri.clear();g_ui->pending_handoff_game.clear();g_ui->pending_handoff_source.clear();InvalidateRect(hwnd,nullptr,FALSE);perform_handoff_connect(uri);return 0;
             }
@@ -903,10 +1029,11 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){ca
         break;
     }
     case WM_KEYDOWN:
-        if(wp==VK_ESCAPE&&g_ui->modal!=InAppModal::None){g_ui->modal=InAppModal::None;InvalidateRect(hwnd,nullptr,FALSE);return 0;}
+        if(wp==VK_ESCAPE&&g_ui->modal!=InAppModal::None){if(g_ui->modal==InAppModal::HandoffBusy)cancel_handoff();else{g_ui->modal=InAppModal::None;InvalidateRect(hwnd,nullptr,FALSE);}return 0;}
         if(g_ui->modal!=InAppModal::None)return 0;
         if(wp==VK_ESCAPE&&g_ui->page==UiPage::Settings){g_ui->page=UiPage::Main;InvalidateRect(hwnd,nullptr,FALSE);return 0;}
         if(wp==VK_RETURN&&g_ui->page==UiPage::Main){const auto snap=g_ui->client.snapshot();if(snap.phase==glo::UiPhase::Disconnected&&snap.state!=glo::ConnectionState::Connecting)connect_loaded();return 0;}break;
+    case WM_GLO_HANDOFF_DONE:finish_handoff_task(hwnd);return 0;
     case WM_GLO_UPDATE:{const auto s=g_ui->client.snapshot();if(s.session_id!=0&&!g_ui->config_consumed){g_ui->config_consumed=true;g_ui->options.session_grant.clear();if(g_ui->config)g_ui->config->grant.clear();}if(s.phase==glo::UiPhase::Disconnected&&g_ui->config_consumed&&!g_ui->disconnecting.load())clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);UpdateWindow(hwnd);update_tray_icon();check_session_warnings(s);if(s.error&&s.error->generation&&s.error->generation!=g_ui->last_error_generation){g_ui->last_error_generation=s.error->generation;const auto[t,m]=localized_error(*s.error);MessageBoxW(hwnd,m.c_str(),t.c_str(),MB_OK|MB_ICONERROR|MB_TASKMODAL);}return 0;}
     case WM_GLO_DISCONNECT_DONE:if(g_ui->disconnect_thread.joinable())g_ui->disconnect_thread.join();g_ui->disconnecting=false;if(g_ui->config_consumed)clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon(true);return 0;
     case WM_GLO_TRAY:
@@ -916,7 +1043,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){ca
     case WM_POWERBROADCAST:if(wp==PBT_APMSUSPEND){if(!g_ui->disconnecting.load())begin_disconnect(hwnd);return TRUE;}break;
     case WM_CLOSE:ShowWindow(hwnd,SW_HIDE);return 0;
     case WM_GLO_SHUTDOWN_DONE:if(g_ui->shutdown_thread.joinable())g_ui->shutdown_thread.join();DestroyWindow(hwnd);return 0;
-    case WM_DESTROY:remove_tray_icon();for(HFONT f:{g_ui->font_title,g_ui->font_hero,g_ui->font_body,g_ui->font_label,g_ui->font_metric,g_ui->font_link})if(f)DeleteObject(f);for(HICON i:{g_ui->icon_settings_light,g_ui->icon_settings_dark,g_ui->icon_sun_light,g_ui->icon_sun_dark,g_ui->icon_moon_light,g_ui->icon_moon_dark,g_ui->icon_back_light,g_ui->icon_back_dark,g_ui->icon_official_light,g_ui->icon_official_dark,g_ui->icon_github_light,g_ui->icon_github_dark,g_ui->icon_facebook_light,g_ui->icon_facebook_dark,g_ui->icon_paste_light,g_ui->icon_paste_dark,g_ui->icon_import_light,g_ui->icon_import_dark,g_ui->icon_connect_light,g_ui->icon_connect_dark,g_ui->icon_disconnect_light,g_ui->icon_disconnect_dark,g_ui->icon_app_big,g_ui->icon_app_small,g_ui->icon_tray_connected})if(i)DestroyIcon(i);PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,msg,wp,lp);}
+    case WM_DESTROY:if(g_ui->handoff_task)g_ui->handoff_task->cancelled.store(true);g_ui->handoff_task.reset();remove_tray_icon();for(HFONT f:{g_ui->font_title,g_ui->font_hero,g_ui->font_body,g_ui->font_label,g_ui->font_metric,g_ui->font_link})if(f)DeleteObject(f);for(HICON i:{g_ui->icon_settings_light,g_ui->icon_settings_dark,g_ui->icon_sun_light,g_ui->icon_sun_dark,g_ui->icon_moon_light,g_ui->icon_moon_dark,g_ui->icon_back_light,g_ui->icon_back_dark,g_ui->icon_official_light,g_ui->icon_official_dark,g_ui->icon_github_light,g_ui->icon_github_dark,g_ui->icon_facebook_light,g_ui->icon_facebook_dark,g_ui->icon_paste_light,g_ui->icon_paste_dark,g_ui->icon_import_light,g_ui->icon_import_dark,g_ui->icon_connect_light,g_ui->icon_connect_dark,g_ui->icon_disconnect_light,g_ui->icon_disconnect_dark,g_ui->icon_app_big,g_ui->icon_app_small,g_ui->icon_tray_connected})if(i)DestroyIcon(i);PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,msg,wp,lp);}
 }
 
 int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR,int show){if(auto worker_exit=glo::run_network_worker_if_requested())return *worker_exit;SetProcessDPIAware();auto ui=std::make_unique<UiState>();g_ui=ui.get();g_ui->theme=system_looks_dark()?ThemeMode::Dark:ThemeMode::Light;load_settings();CommandArgs command;try{command=parse_args();}catch(const std::exception&e){MessageBoxW(nullptr,widen(e.what()).c_str(),L"GLO - Command line",MB_OK|MB_ICONERROR);return 64;}g_ui->options.dbg_log=g_ui->debug_logging;sync_frontend_debug_log(false);g_ui->app_log.info("APP001",std::string("event=start version=")+GLO_VERSION+" process=frontend");

@@ -74,9 +74,9 @@ std::optional<GameId> game_id(std::string_view key){for(const auto& p:kGameProfi
 bool parse_session_config_json(std::string_view json,SessionConfig& out,std::string& error){
     try{
         FlatJson r(json);
-        static const std::set<std::string> allowed={"schema","relay","relay_name","relay_public_key","game","grant","timeout_message","profile_id","profile_revision","gameplay_ipv4","port_min","port_max"};
+        static const std::set<std::string> allowed={"schema","relay","relay_name","relay_public_key","game","grant","timeout_message","profile_id","profile_revision","gameplay_ipv4","port_min","port_max","udp_port_rules"};
         for(const auto& [key,_]:r.values())if(!allowed.contains(key))throw std::runtime_error("Unsupported config field: "+key);
-        if(r.number("schema")!=2)throw std::runtime_error("Unsupported config schema");
+        const auto schema=r.number("schema");if(schema!=2&&schema!=3)throw std::runtime_error("Unsupported config schema");
         const auto relay=r.require_string("relay"),relay_name=r.optional_string("relay_name"),pin=r.require_string("relay_public_key"),game=r.require_string("game"),grant=r.require_string("grant"),timeout=r.optional_string("timeout_message");
         if(!cli::hex_key(pin))throw std::runtime_error("relay_public_key must be exactly 64 hexadecimal characters");
         auto gid=game_id(game);if(!gid)throw std::runtime_error("Unsupported game profile");
@@ -89,16 +89,19 @@ bool parse_session_config_json(std::string_view json,SessionConfig& out,std::str
         if(!parse_profile_hosts(hosts,validated,host_error))throw std::runtime_error(host_error);
         const auto revision=r.number("profile_revision"), lo=r.number("port_min"),hi=r.number("port_max");
         if(revision<1||lo<1||hi>65535||lo>hi)throw std::runtime_error("Invalid profile revision or UDP ports");
+        UdpPortRanges port_ranges;
+        if(schema==3){if(!parse_udp_port_rules(r.require_string("udp_port_rules"),port_ranges))throw std::runtime_error("Invalid UDP port rules");}
+        else{if(r.values().contains("udp_port_rules"))throw std::runtime_error("UDP port rules require schema 3");port_ranges.emplace_back(static_cast<std::uint16_t>(lo),static_cast<std::uint16_t>(hi));}
         auto [host,port]=cli::endpoint(relay);SessionConfig parsed;
         parsed.profile_id=profile_id;parsed.profile_revision=static_cast<std::uint64_t>(revision);
-        parsed.gameplay_ipv4=hosts;parsed.port_min=static_cast<std::uint16_t>(lo);parsed.port_max=static_cast<std::uint16_t>(hi);parsed.relay_host=std::move(host);parsed.relay_port=static_cast<std::uint16_t>(port);parsed.relay_public_key=pin;parsed.relay_name=relay_name;parsed.game_id=*gid;parsed.grant=std::move(raw);if(!timeout.empty())parsed.timeout_message=timeout;out=std::move(parsed);error.clear();return true;
+        parsed.port_rules=std::move(port_ranges);parsed.gameplay_ipv4=hosts;parsed.port_min=static_cast<std::uint16_t>(lo);parsed.port_max=static_cast<std::uint16_t>(hi);parsed.relay_host=std::move(host);parsed.relay_port=static_cast<std::uint16_t>(port);parsed.relay_public_key=pin;parsed.relay_name=relay_name;parsed.game_id=*gid;parsed.grant=std::move(raw);if(!timeout.empty())parsed.timeout_message=timeout;out=std::move(parsed);error.clear();return true;
     }catch(const std::exception& e){error=e.what();return false;}
 }
 
 bool unwrap_session_config_api_response(std::string_view response,std::string& config_json,std::string& error){
     try{
         FlatJson r(response);
-        static const std::set<std::string> allowed={"ok","schema","relay","relay_name","relay_public_key","game","grant","timeout_message","profile_id","profile_revision","gameplay_ipv4","port_min","port_max"};
+        static const std::set<std::string> allowed={"ok","schema","relay","relay_name","relay_public_key","game","grant","timeout_message","profile_id","profile_revision","gameplay_ipv4","port_min","port_max","udp_port_rules"};
         for(const auto& [key,_]:r.values())if(!allowed.contains(key))throw std::runtime_error("Unsupported API response field: "+key);
         if(!r.boolean("ok"))throw std::runtime_error("GLO API response did not indicate success");
         const auto schema=r.number("schema");
@@ -109,6 +112,7 @@ bool unwrap_session_config_api_response(std::string_view response,std::string& c
            <<",\"profile_revision\":"<<r.number("profile_revision")
            <<",\"gameplay_ipv4\":"<<json_quote(r.require_string("gameplay_ipv4"))
            <<",\"port_min\":"<<r.number("port_min")<<",\"port_max\":"<<r.number("port_max");
+        if(schema==3)out<<",\"udp_port_rules\":"<<json_quote(r.require_string("udp_port_rules"));
         if(!timeout.empty())out<<",\"timeout_message\":"<<json_quote(timeout);
         out<<"}";
         config_json=out.str();error.clear();return true;
