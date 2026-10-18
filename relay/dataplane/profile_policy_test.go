@@ -36,3 +36,33 @@ func TestMultipleGamesShareHostWithDifferentUDPPorts(t *testing.T) {
 		t.Fatal("port gap incorrectly allowed or valid range rejected")
 	}
 }
+
+func TestCIDRWidePubgNoPortLeak(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "pubg.json")
+	data := `{"schema":1,"revision":9,"routes":[{"cidr":"20.212.0.0/16","port_min":19000,"port_max":21000},{"cidr":"20.212.0.0/16","port_min":25000,"port_max":30000}]}`
+	if err := os.WriteFile(p, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := readProfileRules(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := glocore.TargetPolicy{Rules: rules}
+	if !policy.Allows(net.ParseIP("20.212.244.1"), 19687, 56000) ||
+		!policy.Allows(net.ParseIP("20.212.244.213"), 29575, 56000) ||
+		policy.Allows(net.ParseIP("20.212.244.213"), 8081, 56000) ||
+		policy.Allows(net.ParseIP("20.213.0.1"), 19687, 56000) {
+		t.Fatal("wide CIDR port isolation failure")
+	}
+	for _, wrong := range []string{
+		`{"schema":1,"revision":1,"routes":[{"cidr":"20.212.0.0/15","port_min":19000,"port_max":30000}]}`,
+		`{"schema":1,"revision":1,"routes":[{"cidr":"20.212.1.0/16","port_min":19000,"port_max":30000}]}`,
+	} {
+		if err := os.WriteFile(p, []byte(wrong), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readProfileRules(p); err == nil {
+			t.Fatal("bad CIDR accepted")
+		}
+	}
+}

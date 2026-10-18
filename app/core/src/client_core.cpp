@@ -464,7 +464,7 @@ void ClientCore::worker(ClientOptions options) {
 
     publish(ConnectionState::Connecting, "Preparing network...");
     GameDetector detector(options.game_id);
-    std::vector<std::uint32_t> profile_hosts;
+    std::vector<Ipv4Cidr> profile_hosts;
     std::string profile_error;
     const std::string ips=options.gameplay_ipv4.empty() ? bundled_profile_hosts(game_profile(options.game_id).key) : options.gameplay_ipv4;
     if(!parse_profile_hosts(ips,profile_hosts,profile_error)||options.port_rules.empty()||options.port_rules.size()>32){

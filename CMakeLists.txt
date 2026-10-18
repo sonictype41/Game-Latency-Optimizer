@@ -52,6 +52,7 @@ target_include_directories(glo_game_profile_test PRIVATE app/core/include)
 add_test(NAME glo_game_profile_test COMMAND glo_game_profile_test)
 
 add_library(glo_profile_hosts STATIC app/core/src/profile_hosts.cpp)
+target_link_libraries(glo_profile_hosts PUBLIC glo_route_scope)
 target_include_directories(glo_profile_hosts PUBLIC app/core/include)
 add_executable(glo_profile_hosts_test tests/profile_hosts_test.cpp)
 target_link_libraries(glo_profile_hosts_test PRIVATE glo_profile_hosts)

@@ -85,7 +85,7 @@ bool parse_session_config_json(std::string_view json,SessionConfig& out,std::str
         if(timeout.size()>512)throw std::runtime_error("timeout_message is too long");
         const auto profile_id=r.require_string("profile_id");
         if(profile_id.empty()||profile_id.size()>48)throw std::runtime_error("Invalid profile_id");
-        const auto hosts=r.require_string("gameplay_ipv4");std::vector<std::uint32_t> validated;std::string host_error;
+        const auto hosts=r.require_string("gameplay_ipv4");std::vector<Ipv4Cidr> validated;std::string host_error;
         if(!parse_profile_hosts(hosts,validated,host_error))throw std::runtime_error(host_error);
         const auto revision=r.number("profile_revision"), lo=r.number("port_min"),hi=r.number("port_max");
         if(revision<1||lo<1||hi>65535||lo>hi)throw std::runtime_error("Invalid profile revision or UDP ports");

@@ -140,6 +140,10 @@ struct WintunTunnel::Impl {
     std::mutex routes_mu;
     std::vector<Ipv4Cidr> routes;
     std::vector<MIB_IPFORWARD_ROW2> route_rows;
+    std::vector<MIB_IPFORWARD_ROW2> bypass_rows;
+    std::unordered_set<std::uint32_t> bypass_hosts;
+    MIB_IPFORWARD_ROW2 physical_route{};
+    bool physical_route_ready{false};
     std::uint64_t route_generation{1};
     std::atomic<std::shared_ptr<const UdpPortRanges>> game_port_rules{std::make_shared<const UdpPortRanges>(UdpPortRanges{{49152,65535}})};
 
@@ -312,6 +316,8 @@ struct WintunTunnel::Impl {
         // packet captured under an old /32 must never tear down or feed a newer
         // route generation.
         ++route_generation;
+        for (auto it = bypass_rows.rbegin(); it != bypass_rows.rend(); ++it) DeleteIpForwardEntry2(&*it);
+        bypass_rows.clear();bypass_hosts.clear();physical_route_ready=false;
         for (auto it = route_rows.rbegin(); it != route_rows.rend(); ++it) {
             DeleteIpForwardEntry2(&*it);
         }
@@ -390,7 +396,7 @@ struct WintunTunnel::Impl {
             return false;
         }
         if (requested.empty() || requested.size()>32) {
-            error = "Profile must contain 1 to 32 exact /32 routes";
+            error = "Profile must contain 1 to 32 CIDR routes";
             return false;
         }
         if (same_routes(routes, requested) && route_rows.size() == requested.size()) {
@@ -398,9 +404,21 @@ struct WintunTunnel::Impl {
         }
 
         remove_routes_locked();
+        // Capture the existing physical/default interface before adding GLO routes.
+        // Non-game traffic caught by a broad CIDR gets a more-specific direct /32
+        // route. Never inject captured TCP/ICMP packets into Wintun or a raw socket.
+        SOCKADDR_INET reference{};reference.Ipv4.sin_family=AF_INET;
+        reference.Ipv4.sin_addr.S_un.S_addr=htonl(0x01010101u);
+        SOCKADDR_INET source{};
+        auto phys_rc=GetBestRoute2(nullptr,0,nullptr,&reference,0,&physical_route,&source);
+        if(phys_rc!=NO_ERROR || physical_route.InterfaceLuid.Value==luid.Value){
+            error="No safe physical route available for non-game CIDR bypass";
+            remove_routes_locked();return false;
+        }
+        physical_route_ready=true;
         for (const auto& cidr : requested) {
-            if (cidr.prefix_length != 32) {
-                error = "Profile safety policy permits /32 host routes only";
+            if (cidr.prefix_length < 16 || cidr.prefix_length > 32 || (cidr.network_host & cidr_mask(cidr.prefix_length)) != cidr.network_host) {
+                error = "Profile safety policy permits aligned /16 through /32 routes only";
                 remove_routes_locked();
                 return false;
             }
@@ -427,6 +445,34 @@ struct WintunTunnel::Impl {
             route_rows.push_back(row);
             routes.push_back(Ipv4Cidr{normalized, cidr.prefix_length});
         }
+        return true;
+    }
+
+    // On the first non-game packet for a CIDR destination, restore native
+    // Windows routing for that host by installing a more-specific /32 route.
+    // First intercepted packet is not replayed; applications can retry it.
+    // If we cannot safely create an exception, fail-open the entire profile.
+    bool bypass_non_game_host(std::uint32_t host) {
+        std::scoped_lock lock(routes_mu);
+        if(routes.empty())return true;
+        if(bypass_hosts.contains(host))return true;
+        if(!physical_route_ready || bypass_hosts.size()>=128){remove_routes_locked();return false;}
+        // A /32 GLO route cannot coexist with a same-prefix physical exception.
+        // Degrade to all-direct instead of silently dropping non-game traffic.
+        for(const auto& route:routes)if(route.prefix_length==32 && route.network_host==host){
+            remove_routes_locked();return false;
+        }
+        MIB_IPFORWARD_ROW2 row{};InitializeIpForwardEntry(&row);
+        row.InterfaceLuid=physical_route.InterfaceLuid;
+        row.DestinationPrefix.Prefix.Ipv4.sin_family=AF_INET;
+        row.DestinationPrefix.Prefix.Ipv4.sin_addr.S_un.S_addr=htonl(host);
+        row.DestinationPrefix.PrefixLength=32;
+        row.NextHop=physical_route.NextHop;
+        row.Metric=1;
+        row.Protocol=static_cast<NL_ROUTE_PROTOCOL>(MIB_IPPROTO_NETMGMT);
+        const DWORD rc=CreateIpForwardEntry2(&row);
+        if(rc!=NO_ERROR){remove_routes_locked();return false;}
+        bypass_hosts.insert(host);bypass_rows.push_back(row);
         return true;
     }
 
@@ -537,11 +583,15 @@ struct WintunTunnel::Impl {
                         if (b[9] != IPPROTO_UDP || size < ihl + 8) {
                             if (b[9] != IPPROTO_UDP) count(active_route.generation, d_non_udp);
                             else count(active_route.generation, d_malformed_udp);
-                            // A /32 route is protocol-agnostic, so ICMP/TCP destined for
+                            // CIDR routes are protocol-agnostic, so ICMP/TCP destined for
                             // the selected game host can enter Wintun too. Those packets
                             // are not game tunnel traffic. Drop them locally, keep the
                             // already-verified gameplay route intact, and notify control
                             // at most once per route epoch for diagnostics.
+                            if(!bypass_non_game_host(dst)){
+                                if(event_fn){WintunEvent fail;fail.type=WintunEventType::StoppedUnexpectedly;event_fn(fail);}
+                                release_receive(session,packet);continue;
+                            }
                             auto seen = non_game_notified_generation.load(std::memory_order_relaxed);
                             if (seen != active_route.generation &&
                                 non_game_notified_generation.compare_exchange_strong(
@@ -558,12 +608,16 @@ struct WintunTunnel::Impl {
                             const auto src_port = get16(u);
                             const auto dst_port = get16(u + 2);
 
-                            // The host route is broader than the Roblox gameplay-port
+                            // The CIDR route is broader than the gameplay-port
                             // profile. Do not turn unrelated UDP on the same IP into
                             // tunnel traffic. Gameplay may move among high ports on the
                             // same host, so every profile-valid port remains accepted.
                             if (!udp_port_allowed(*game_port_rules.load(std::memory_order_acquire),dst_port)) {
                                 count(active_route.generation, d_wrong_port);
+                                if(!bypass_non_game_host(dst)){
+                                    if(event_fn){WintunEvent fail;fail.type=WintunEventType::StoppedUnexpectedly;event_fn(fail);}
+                                    release_receive(session,packet);continue;
+                                }
                                 auto seen = non_game_notified_generation.load(std::memory_order_relaxed);
                                 if (seen != active_route.generation &&
                                     non_game_notified_generation.compare_exchange_strong(
@@ -771,16 +825,15 @@ void WintunTunnel::clear_routes() {
     route_active_ = false;
 }
 
-bool WintunTunnel::set_profile_routes(const std::vector<std::uint32_t>& hosts,
+bool WintunTunnel::set_profile_routes(const std::vector<Ipv4Cidr>& hosts,
                                       const UdpPortRanges& port_rules,std::string& error) {
     if (!running_ || !impl_) { error="Wintun is not active";return false; }
     if(hosts.empty()||hosts.size()>32||port_rules.empty()||port_rules.size()>32){error="Invalid profile route set";return false;}
-    std::vector<Ipv4Cidr> exact;exact.reserve(hosts.size());
-    for(auto ip:hosts) exact.push_back(host_route(ip));
+    const auto& exact=hosts;
     for(auto [lo,hi]:port_rules)if(lo==0||lo>hi){error="Invalid UDP Port Rules";return false;}
     impl_->game_port_rules.store(std::make_shared<const UdpPortRanges>(port_rules),std::memory_order_release);
     if(!impl_->install_routes(exact,error)){route_active_=false;return false;}
-    for(auto ip:hosts){std::string verify;if(!impl_->route_selected_for_host(ip,verify)){
+    for(const auto& cidr:hosts){const auto ip=cidr.network_host+(cidr.prefix_length<32?1u:0u);std::string verify;if(!impl_->route_selected_for_host(ip,verify)){
         impl_->clear_routes();route_active_=false;error="Windows did not select Wintun for "+ipv4_text(ip)+": "+verify;return false;
     }}
     if(impl_->diag_enabled.load())impl_->reset_diag(impl_->routes_snapshot().generation);

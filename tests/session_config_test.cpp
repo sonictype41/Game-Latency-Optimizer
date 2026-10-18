@@ -13,6 +13,12 @@ int main(){
   vg.replace(vg.find(old_game),old_game.size(),"\"game\":\"valorant\"");
   assert(glo::parse_session_config_json(vg,c,e));
   assert(c.game_id==glo::GameId::Valorant);
+  // New PUBG profile is accepted with CIDRs, without any hardcoded PUBG endpoint.
+  auto pg=good;
+  pg.replace(pg.find("\"game\":\"roblox\""),std::string("\"game\":\"roblox\"").size(),"\"game\":\"pubg\"");
+  pg.replace(pg.find("128.116.97.33/32"),std::string("128.116.97.33/32").size(),"20.212.0.0/16,57.155.0.0/16");
+  assert(glo::parse_session_config_json(pg,c,e));
+  assert(c.game_id==glo::GameId::PUBG && c.gameplay_ipv4=="20.212.0.0/16,57.155.0.0/16");
   // The parser is still strict for unsupported games.
   vg.replace(vg.find("\"game\":\"valorant\""),std::string("\"game\":\"valorant\"").size(),"\"game\":\"not-supported\"");
   assert(!glo::parse_session_config_json(vg,c,e));

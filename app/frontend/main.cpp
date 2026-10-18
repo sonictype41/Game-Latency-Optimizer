@@ -44,6 +44,7 @@ constexpr UINT WM_GLO_DISCONNECT_DONE = WM_APP + 2;
 constexpr UINT WM_GLO_SHUTDOWN_DONE = WM_APP + 3;
 constexpr UINT WM_GLO_TRAY = WM_APP + 4;
 constexpr UINT WM_GLO_HANDOFF_DONE = WM_APP + 5;
+constexpr UINT WM_GLO_INCOMING_URI = WM_APP + 6;
 constexpr UINT kTrayIconId = 1;
 constexpr UINT kTrayOpenId = 41001;
 constexpr UINT kTrayDisconnectId = 41002;
@@ -608,7 +609,7 @@ void run_handoff_task(std::shared_ptr<HandoffTask> task,std::wstring uri,HWND hw
             if(!http_post_json(link.endpoint,L"/app/handoff/inspect",inspect,status,resp,err)||status/100!=2){
                 fail(err.empty()?L"Provider rejected the link or inspect timed out.":err);
             }else{
-                const auto game=json_string_field(resp,"game"),issuer=json_string_field(resp,"issuer");
+                const auto game=json_string_field(resp,"game"),issuer=json_string_field(resp,"issuer"),source_label=json_string_field(resp,"source_label");
                 auto candidates=json_relay_candidates(resp);
                 std::wstring canonical_returned,returned_host,source_host,canonical;
                 if(!game||!issuer||candidates.empty()||
@@ -620,7 +621,7 @@ void run_handoff_task(std::shared_ptr<HandoffTask> task,std::wstring uri,HWND hw
                     canonical_https_origin(kOfficialWebUrl,official,host);
                     canonical_https_origin(kOfficialApiOrigin,official_api,oah);
                     const bool trusted=link.issuer==official&&link.endpoint==official_api;
-                    {std::scoped_lock lock(task->mutex);task->game=widen(*game);task->source=source_host;task->trusted=trusted;}
+                    {std::scoped_lock lock(task->mutex);task->game=widen(*game);task->source=(trusted&&source_label&&*source_label=="test-glo")?L"test-glo":source_host;task->trusted=trusted;}
                     if(task->connecting&&!task->cancelled.load()){
                         task->stage.store(2);
                         // This waits only in the worker, never in WndProc/message loop.
@@ -683,6 +684,8 @@ void start_handoff_task(const std::wstring& uri,bool connect){
 void perform_handoff_connect(const std::wstring& uri){start_handoff_task(uri,true);}
 
 void handle_handoff_uri(const std::wstring& uri){
+    // External URI always returns to Main before starting an in-app modal.
+    if(g_ui->page!=UiPage::Main){g_ui->page=UiPage::Main;InvalidateRect(g_ui->window,nullptr,FALSE);}
     const auto safe=handoff_uri_safe_summary(uri);
     g_ui->app_log.info("URI001","event=handoff_received "+safe);
     const auto snap=g_ui->client.snapshot();
@@ -772,7 +775,7 @@ void paint_ui(HWND hwnd,HDC target){
     HDC dc=CreateCompatibleDC(target);HBITMAP bitmap=CreateCompatibleBitmap(target,std::max(1,w),std::max(1,h));auto old_bitmap=SelectObject(dc,bitmap);
     const Palette p=palette(g_ui->theme);HBRUSH bg=CreateSolidBrush(p.background);FillRect(dc,&client,bg);DeleteObject(bg);g_ui->how_to_use_rect=RECT{};g_ui->relay_eye_rect=RECT{};
 
-    if(g_ui->page==UiPage::Settings){paint_settings(dc,client,p);BitBlt(target,0,0,w,h,dc,0,0,SRCCOPY);SelectObject(dc,old_bitmap);DeleteObject(bitmap);DeleteDC(dc);return;}
+    if(g_ui->page==UiPage::Settings){paint_settings(dc,client,p);paint_in_app_modal(dc,client,p);BitBlt(target,0,0,w,h,dc,0,0,SRCCOPY);SelectObject(dc,old_bitmap);DeleteObject(bitmap);DeleteDC(dc);return;}
 
     RECT title{28,18,w-170,58};draw_text(dc,L"Gaming. Low-latency. Open.",title,DT_LEFT|DT_VCENTER|DT_SINGLELINE,g_ui->font_title,p.text);
     g_ui->settings_rect=RECT{w-104,20,w-70,54};draw_icon_button(dc,g_ui->settings_rect,p);draw_settings_icon(dc,g_ui->settings_rect);
@@ -986,7 +989,12 @@ void show_tray_menu(HWND hwnd){
 }
 
 LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){case WM_CREATE:g_ui->window=hwnd;g_ui->font_title=make_font(26,FW_BOLD);g_ui->font_hero=make_font(27,FW_BOLD);g_ui->font_body=make_font(14,FW_NORMAL);g_ui->font_label=make_font(11,FW_BOLD);g_ui->font_metric=make_font(18,FW_BOLD);g_ui->font_link=make_font(14,FW_NORMAL,true);g_ui->icon_app_big=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));g_ui->icon_app_small=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_DEFAULTCOLOR));if(g_ui->icon_app_big)SendMessageW(hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(g_ui->icon_app_big));if(g_ui->icon_app_small)SendMessageW(hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(g_ui->icon_app_small));g_ui->icon_settings_light=load_ui_icon(IDI_GLO_SETTINGS_LIGHT);g_ui->icon_settings_dark=load_ui_icon(IDI_GLO_SETTINGS_DARK);g_ui->icon_sun_light=load_ui_icon(IDI_GLO_SUN_LIGHT);g_ui->icon_sun_dark=load_ui_icon(IDI_GLO_SUN_DARK);g_ui->icon_moon_light=load_ui_icon(IDI_GLO_MOON_LIGHT);g_ui->icon_moon_dark=load_ui_icon(IDI_GLO_MOON_DARK);g_ui->icon_back_light=load_ui_icon(IDI_GLO_BACK_LIGHT);g_ui->icon_back_dark=load_ui_icon(IDI_GLO_BACK_DARK);g_ui->icon_official_light=load_ui_icon(IDI_GLO_OFFICIAL_LIGHT);g_ui->icon_official_dark=load_ui_icon(IDI_GLO_OFFICIAL_DARK);g_ui->icon_github_light=load_ui_icon(IDI_GLO_GITHUB_LIGHT);g_ui->icon_github_dark=load_ui_icon(IDI_GLO_GITHUB_DARK);g_ui->icon_facebook_light=load_ui_icon(IDI_GLO_FACEBOOK_LIGHT);g_ui->icon_facebook_dark=load_ui_icon(IDI_GLO_FACEBOOK_DARK);g_ui->icon_paste_light=load_ui_icon(IDI_GLO_PASTE_LIGHT);g_ui->icon_paste_dark=load_ui_icon(IDI_GLO_PASTE_DARK);g_ui->icon_import_light=load_ui_icon(IDI_GLO_IMPORT_LIGHT);g_ui->icon_import_dark=load_ui_icon(IDI_GLO_IMPORT_DARK);g_ui->icon_connect_light=load_ui_icon(IDI_GLO_CONNECT_LIGHT);g_ui->icon_connect_dark=load_ui_icon(IDI_GLO_CONNECT_DARK);g_ui->icon_disconnect_light=load_ui_icon(IDI_GLO_DISCONNECT_LIGHT);g_ui->icon_disconnect_dark=load_ui_icon(IDI_GLO_DISCONNECT_DARK);g_ui->icon_tray_connected=make_connected_tray_icon(g_ui->icon_app_small);update_tray_icon(true);SetTimer(hwnd,42,250,nullptr);return 0;
-    case WM_COPYDATA:{auto*cds=reinterpret_cast<COPYDATASTRUCT*>(lp);if(!cds||cds->dwData!=kHandoffCopyData||!cds->lpData||cds->cbData<sizeof(wchar_t)||cds->cbData>16384)return FALSE;if(cds->cbData%sizeof(wchar_t))return FALSE;auto* begin=static_cast<const wchar_t*>(cds->lpData);auto* end=std::find(begin,begin+cds->cbData/sizeof(wchar_t),L'\0');if(end==begin+cds->cbData/sizeof(wchar_t))return FALSE;std::wstring uri(begin,end);ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);handle_handoff_uri(uri);return TRUE;}
+    case WM_COPYDATA:{auto*cds=reinterpret_cast<COPYDATASTRUCT*>(lp);if(!cds||cds->dwData!=kHandoffCopyData||!cds->lpData||cds->cbData<sizeof(wchar_t)||cds->cbData>16384)return FALSE;if(cds->cbData%sizeof(wchar_t))return FALSE;auto* begin=static_cast<const wchar_t*>(cds->lpData);auto* end=std::find(begin,begin+cds->cbData/sizeof(wchar_t),L'\0');if(end==begin+cds->cbData/sizeof(wchar_t))return FALSE;std::wstring uri(begin,end);auto pending=std::make_unique<std::wstring>(std::move(uri));
+        if(!PostMessageW(hwnd,WM_GLO_INCOMING_URI,0,reinterpret_cast<LPARAM>(pending.get())))return FALSE;
+        pending.release();return TRUE;}
+    case WM_GLO_INCOMING_URI:{std::unique_ptr<std::wstring> uri(reinterpret_cast<std::wstring*>(lp));
+        if(!uri)return 0;ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);
+        handle_handoff_uri(*uri);return 0;}
     case WM_TIMER:if(wp==42){const auto snap=g_ui->client.snapshot();bool repaint=snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load()||g_ui->modal==InAppModal::HandoffBusy;if(g_ui->action_feedback!=ActionFeedback::None){if(GetTickCount64()>=g_ui->action_feedback_until_ms){g_ui->action_feedback=ActionFeedback::None;g_ui->action_feedback_until_ms=0;}repaint=true;}if(repaint)InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon();check_session_warnings(snap);return 0;}break;
     case WM_PAINT:{PAINTSTRUCT ps{};HDC dc=BeginPaint(hwnd,&ps);paint_ui(hwnd,dc);EndPaint(hwnd,&ps);return 0;}case WM_ERASEBKGND:return 1;
     case WM_SETCURSOR:if(LOWORD(lp)==HTCLIENT){POINT pt{};GetCursorPos(&pt);ScreenToClient(hwnd,&pt);if(g_ui->modal!=InAppModal::None){const bool hot=point_in(g_ui->modal_cancel_rect,pt)||point_in(g_ui->modal_primary_rect,pt)||point_in(g_ui->modal_uri_rect,pt)||point_in(g_ui->modal_paste_rect,pt)||point_in(g_ui->modal_import_rect,pt);if(hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}break;}const bool common=point_in(g_ui->official_rect,pt)||point_in(g_ui->github_rect,pt)||point_in(g_ui->facebook_rect,pt)||point_in(g_ui->theme_rect,pt);const bool page_hot=g_ui->page==UiPage::Settings?(point_in(g_ui->back_rect,pt)||point_in(g_ui->language_en_rect,pt)||point_in(g_ui->language_vi_rect,pt)||point_in(g_ui->debug_toggle_rect,pt)||point_in(g_ui->debug_log_link_rect,pt)):(point_in(g_ui->settings_rect,pt)||point_in(g_ui->paste_rect,pt)||point_in(g_ui->import_rect,pt)||point_in(g_ui->connect_rect,pt)||point_in(g_ui->how_to_use_rect,pt)||point_in(g_ui->relay_eye_rect,pt));if(common||page_hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}}break;
@@ -1048,5 +1056,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){ca
 }
 
 int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR,int show){if(auto worker_exit=glo::run_network_worker_if_requested())return *worker_exit;SetProcessDPIAware();auto ui=std::make_unique<UiState>();g_ui=ui.get();g_ui->theme=system_looks_dark()?ThemeMode::Dark:ThemeMode::Light;load_settings();CommandArgs command;try{command=parse_args();}catch(const std::exception&e){MessageBoxW(nullptr,widen(e.what()).c_str(),L"GLO - Command line",MB_OK|MB_ICONERROR);return 64;}g_ui->options.dbg_log=g_ui->debug_logging;sync_frontend_debug_log(false);g_ui->app_log.info("APP001",std::string("event=start version=")+GLO_VERSION+" process=frontend");
-HANDLE instance_mutex=CreateMutexW(nullptr,FALSE,kSingleInstanceMutex);if(!instance_mutex){MessageBoxW(nullptr,L"Could not create the GLO instance lock.",L"GLO",MB_OK|MB_ICONERROR);return 1;}if(GetLastError()==ERROR_ALREADY_EXISTS){HWND existing=nullptr;for(int i=0;i<30&&!existing;++i){existing=FindWindowW(kMainWindowClass,nullptr);if(!existing)Sleep(50);}if(existing){ShowWindow(existing,SW_RESTORE);SetForegroundWindow(existing);if(command.uri){COPYDATASTRUCT cds{};cds.dwData=kHandoffCopyData;cds.cbData=static_cast<DWORD>((command.uri->size()+1)*sizeof(wchar_t));cds.lpData=command.uri->data();DWORD_PTR forwarded=0;SendMessageTimeoutW(existing,WM_COPYDATA,0,reinterpret_cast<LPARAM>(&cds),SMTO_ABORTIFHUNG|SMTO_BLOCK,2000,&forwarded);}}CloseHandle(instance_mutex);g_ui=nullptr;return 0;}
+HANDLE instance_mutex=CreateMutexW(nullptr,FALSE,kSingleInstanceMutex);if(!instance_mutex){MessageBoxW(nullptr,L"Could not create the GLO instance lock.",L"GLO",MB_OK|MB_ICONERROR);return 1;}if(GetLastError()==ERROR_ALREADY_EXISTS){HWND existing=nullptr;for(int i=0;i<30&&!existing;++i){existing=FindWindowW(kMainWindowClass,nullptr);if(!existing)Sleep(50);}if(existing){ShowWindow(existing,SW_RESTORE);SetForegroundWindow(existing);if(command.uri){COPYDATASTRUCT cds{};cds.dwData=kHandoffCopyData;cds.cbData=static_cast<DWORD>((command.uri->size()+1)*sizeof(wchar_t));cds.lpData=command.uri->data();DWORD_PTR forwarded=0;if(!SendMessageTimeoutW(existing,WM_COPYDATA,0,reinterpret_cast<LPARAM>(&cds),SMTO_ABORTIFHUNG|SMTO_BLOCK,2000,&forwarded)||forwarded!=TRUE){
+                        MessageBoxW(nullptr,L"Could not forward GLO link to the existing window. Try again or reopen GLO.",L"GLO - URI",MB_OK|MB_ICONERROR);
+                    }}}CloseHandle(instance_mutex);g_ui=nullptr;return 0;}
 WNDCLASSW wc{};wc.lpfnWndProc=wnd_proc;wc.hInstance=instance;wc.lpszClassName=kMainWindowClass;wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=static_cast<HICON>(LoadImageW(instance,MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));wc.hbrBackground=nullptr;if(!RegisterClassW(&wc)){g_ui->app_log.error("APP900","event=window_class_register_failed");CloseHandle(instance_mutex);return 1;}RECT wr{0,0,kClientWidth,kClientHeight};AdjustWindowRect(&wr,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,FALSE);HWND hwnd=CreateWindowExW(0,kMainWindowClass,L"Game Latency Optimizer",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,CW_USEDEFAULT,CW_USEDEFAULT,wr.right-wr.left,wr.bottom-wr.top,nullptr,nullptr,instance,nullptr);if(!hwnd){g_ui->app_log.error("APP901","event=window_create_failed");CloseHandle(instance_mutex);return 2;}ShowWindow(hwnd,show);UpdateWindow(hwnd);if(command.config){std::string text,error;if(read_text_file(*command.config,text,error)){parse_and_apply(text);}else MessageBoxW(hwnd,widen(error).c_str(),L"GLO - Config",MB_OK|MB_ICONERROR);}if(command.uri)handle_handoff_uri(*command.uri);MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}g_ui->app_log.info("APP002","event=shutdown process=frontend");CloseHandle(instance_mutex);g_ui=nullptr;return static_cast<int>(msg.wParam);}

@@ -24,7 +24,7 @@ struct GameProfile {
 inline constexpr std::array<GameProfile, 5> kGameProfiles{{
     {GameId::Roblox, "roblox", "Roblox", true},
     {GameId::Minecraft, "minecraft", "Minecraft", false},
-    {GameId::PUBG, "pubg", "PUBG", false},
+    {GameId::PUBG, "pubg", "PUBG", true},
     {GameId::LeagueOfLegends, "league-of-legends", "League of Legends", false},
     {GameId::Valorant, "valorant", "VALORANT", true},
 }};

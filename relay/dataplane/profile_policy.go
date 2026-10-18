@@ -49,8 +49,8 @@ func readProfileRules(path string) ([]glocore.TargetRule, error) {
 			return nil, fmt.Errorf("invalid CIDR: %s", r.CIDR)
 		}
 		ones, bits := n.Mask.Size()
-		if ones != 32 || bits != 32 || !glocore.PublicIPv4(ip) || ip.String() != n.IP.String() {
-			return nil, errors.New("relay profile must contain only public /32 routes")
+		if ones < 16 || ones > 32 || bits != 32 || !glocore.PublicIPv4(ip) || !glocore.PublicIPv4(lastIPv4(n)) || !ip.Equal(n.IP) {
+			return nil, errors.New("relay profile requires aligned public /16-/32 CIDRs")
 		}
 		key := fmt.Sprintf("%s:%d-%d", r.CIDR, r.PortMin, r.PortMax)
 		if seen[key] || r.PortMin < 1 || r.PortMax < r.PortMin {
@@ -60,4 +60,17 @@ func readProfileRules(path string) ([]glocore.TargetRule, error) {
 		out = append(out, glocore.TargetRule{Network: n, MinPort: r.PortMin, MaxPort: r.PortMax})
 	}
 	return out, nil
+}
+
+// Last IPv4 address must also be globally routable; reject prefixes spanning restricted space.
+func lastIPv4(n *net.IPNet) net.IP {
+	ip := n.IP.To4()
+	if ip == nil {
+		return nil
+	}
+	last := append(net.IP(nil), ip...)
+	for i := range last {
+		last[i] |= ^n.Mask[i]
+	}
+	return last
 }

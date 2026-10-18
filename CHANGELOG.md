@@ -1,5 +1,24 @@
 # Changelog — public OSS releases only
 
+## [0.0.6-beta] - 2026-10-18
+
+### Added
+- PUBG Game ID and process detection (TslGame.exe) from Game Profile; no hardcoded PUBG IPs or UDP ports.
+- Aligned public IPv4 CIDR targets /16 through /32 in session parser, Windows Wintun routes and Go relay policy.
+- Non-game CIDR safeguard: add more-specific native /32 direct-route exceptions on first non-game packet. The first affected packet is dropped (no raw packet replay); on exemption failure, fail-open the whole profile to direct. No WFP.
+- Async dispatch for incoming glo:// WM_COPYDATA handoff while Settings/UI is open, plus a failed-forward notification.
+- Targeted CIDR / PUBG / UDP expression and relay-policy regression tests.
+
+### Fixed
+- Incoming URI handoff is deferred out of synchronous WM_COPYDATA handling, reducing Settings UI lockups.
+- Forwarding failures now notify the user rather than silently exiting.
+
+### Compatibility / limitations
+- Source backport based on the previously available OSS 0.0.7-beta tree, released with coherent 0.0.6-beta metadata by explicit request. The application wire protocol is unchanged.
+- Deploy updated relay and Node Agent before enabling wide CIDR profiles in Production 0.0.7-r1-beta. Legacy runtime rejects /16 instead of silently routing.
+- Native Windows Wintun and Settings-to-URI behavior require integration testing on Windows before public rollout; portable tests are not a substitute.
+- Broad CIDR routes are system-wide. A non-game IP is excluded entirely, which may also leave gameplay to that same IP direct.
+
 ## [0.0.5-r3-beta] - 2026-10-14
 
 ### Fixed
@@ -69,6 +88,21 @@
 - The notification display depends on Windows notification settings and Do Not Disturb.
 
 # Changelog — public OSS releases only
+
+## [0.0.6-beta] - 2026-10-18
+
+### Added
+- PUBG Game ID and process detection (TslGame.exe) from Game Profile; no hardcoded PUBG IPs or UDP ports.
+- Aligned public IPv4 CIDR targets /16 through /32 in session parser, Windows Wintun routes and Go relay policy.
+- Non-game CIDR safeguard: add more-specific native /32 direct-route exceptions on first non-game packet. The first affected packet is dropped (no raw packet replay); on exemption failure, fail-open the whole profile to direct. No WFP.
+- Async dispatch for incoming glo:// WM_COPYDATA handoff while Settings/UI is open, plus a failed-forward notification.
+- Targeted CIDR / PUBG / UDP expression and relay-policy regression tests.
+
+### Compatibility / limitations
+- Source backport based on the previously available OSS 0.0.7-beta tree, released with coherent 0.0.6-beta metadata by explicit request. The application wire protocol is unchanged.
+- Deploy updated relay and Node Agent before enabling wide CIDR profiles in Production 0.0.7-r1-beta. Legacy runtime rejects /16 instead of silently routing.
+- Native Windows Wintun and Settings-to-URI behavior require integration testing on Windows before public rollout; portable tests are not a substitute.
+- Broad CIDR routes are system-wide. A non-game IP is excluded entirely, which may also leave gameplay to that same IP direct.
 
 ## [0.0.4-beta] - 2026-10-09
 
