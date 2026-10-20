@@ -48,3 +48,13 @@ def test_network_core_protocol_untouched():
     # Core should not import WebView2 or UI render dependencies.
     core=read('app/core/src/client_core.cpp')
     assert 'WebView2' not in core
+
+
+def test_minimum_window_size_std_min_operands_match_int_type():
+    # RECT members are LONG in the Windows SDK, but minw/minh are int.
+    # std::min requires two operands of the same type under MinGW GCC 16.
+    native=read('app/frontend/main.cpp')
+    assert 'std::min(minw,static_cast<int>(monitor.rcWork.right-monitor.rcWork.left))' in native
+    assert 'std::min(minh,static_cast<int>(monitor.rcWork.bottom-monitor.rcWork.top))' in native
+    assert 'std::min(minw,monitor.rcWork.right-monitor.rcWork.left)' not in native
+    assert 'std::min(minh,monitor.rcWork.bottom-monitor.rcWork.top)' not in native

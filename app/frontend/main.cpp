@@ -1199,8 +1199,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
         int minw=frame.right-frame.left,minh=frame.bottom-frame.top;
         MONITORINFO monitor{};monitor.cbSize=sizeof(monitor);
         if(GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor)){
-            minw=std::min(minw,monitor.rcWork.right-monitor.rcWork.left);
-            minh=std::min(minh,monitor.rcWork.bottom-monitor.rcWork.top);
+            minw=std::min(minw,static_cast<int>(monitor.rcWork.right-monitor.rcWork.left));
+            minh=std::min(minh,static_cast<int>(monitor.rcWork.bottom-monitor.rcWork.top));
         }
         info->ptMinTrackSize.x=std::max(640,minw);
         info->ptMinTrackSize.y=std::max(500,minh);
