@@ -59,6 +59,7 @@ def main():
         (exe, "GLO.exe"),
         (manifest, "BUILD_INFO.json"),
         (wintun, "wintun.dll"),
+        (build_dir / "WebView2Loader.dll", "WebView2Loader.dll"),
         (ROOT / "third_party/wintun/INFO.json", "WINTUN_INFO.json"),
         (ROOT / "LICENSE", "LICENSE.txt"),
         (ROOT / "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md"),
@@ -67,10 +68,14 @@ def main():
     ]
     for source, name in copies:
         shutil.copyfile(source, output_dir / name)
+    ui_from = build_dir / "ui"
+    if not (ui_from / "index.html").is_file() or not (ui_from / "app.js").is_file():
+        raise ValueError("Missing WebView2 UI bundle")
+    shutil.copytree(ui_from, output_dir / "ui")
     sums = []
-    for path in sorted(output_dir.iterdir()):
+    for path in sorted(output_dir.rglob("*")):
         if path.is_file():
-            sums.append(hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.name + "\n")
+            sums.append(hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.relative_to(output_dir).as_posix() + "\n")
     (output_dir / "SHA256SUMS.txt").write_text("".join(sums), encoding="utf-8", newline="\n")
     print(f"Packaged generic config client {release} (protocol {version}) -> {output_dir}")
 

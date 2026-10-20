@@ -1,3 +1,13 @@
+## GLO OSS v0.1.0-beta · WebView2 Native Booster
+
+- UI mới: WebView2 Evergreen Runtime, HTML/CSS/JS nội bộ, hai chế độ Services và Connect (URI).
+- Official Services: nhận mã đăng nhập 180 giây từ https://gloptimizer.com/auth/; Client redeem mã qua native API, lưu refresh token với Windows DPAPI. Chọn game/region, xem ngân quỹ và kết nối trực tiếp.
+- Trang nhận thời gian mở bằng trình duyệt mặc định tại https://gloptimizer.com/time/.
+- Custom Connect: dán URI hoặc nhận `glo://connect` từ Windows; giữ inspect/probe/redeem và bước xác nhận. `glo://open` chỉ đánh thức ứng dụng.
+- Wintun và gameplay transport không thay đổi; protocol/network-core giữ nguyên.
+- Khi build trên MSYS2/MinGW64 cần tải SDK chính hãng Microsoft.Web.WebView2 NuGet 1.0.2739.15; `tools/build_app.sh` tự lấy. Máy người dùng cần WebView2 Evergreen Runtime. Package chứa `WebView2Loader.dll` và thư mục `ui/`.
+- **Kiểm thử:** kiểm thử mã nguồn và browser mock không thay thế Windows native compilation, Windows installer smoke test, login/xác minh bảo mật thật và relay trên server live. Chưa chứng nhận production deploy.
+
 # GLO — Game Latency Optimizer
 
 <p align="center"><img src="docs/assets/glo-wordmark-dark-640.png#gh-light-mode-only" width="560" alt="GLO Game Latency Optimizer"><img src="docs/assets/glo-wordmark-light-640.png#gh-dark-mode-only" width="560" alt="GLO Game Latency Optimizer"></p>

@@ -14,10 +14,13 @@
 #include "glo/user_paths.hpp"
 #include "glo/session_config.hpp"
 #include "glo/ui_resources.h"
+#include "webview_host.hpp"
+#include "official_api.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <chrono>
 #include <cstdint>
 #include <cwchar>
@@ -45,12 +48,14 @@ constexpr UINT WM_GLO_SHUTDOWN_DONE = WM_APP + 3;
 constexpr UINT WM_GLO_TRAY = WM_APP + 4;
 constexpr UINT WM_GLO_HANDOFF_DONE = WM_APP + 5;
 constexpr UINT WM_GLO_INCOMING_URI = WM_APP + 6;
+constexpr UINT WM_GLO_WEB_EVENT = WM_APP + 7;
+constexpr UINT WM_GLO_WEB_START = WM_APP + 8;
 constexpr UINT kTrayIconId = 1;
 constexpr UINT kTrayOpenId = 41001;
 constexpr UINT kTrayDisconnectId = 41002;
 constexpr UINT kTrayQuitId = 41003;
-constexpr int kClientWidth = 620;
-constexpr int kClientHeight = 540;
+constexpr int kClientWidth = 1040;
+constexpr int kClientHeight = 760;
 constexpr wchar_t kMainWindowClass[] = L"GLOGenericClient";
 #define GLO_WIDEN_IMPL(x) L##x
 #define GLO_WIDEN(x) GLO_WIDEN_IMPL(x)
@@ -87,6 +92,10 @@ enum class ConfigSource { Manual, ThirdPartyHandoff, OfficialHandoff };
 
 struct UiState {
     HWND window{};
+    WebviewHost webview;
+    std::unique_ptr<OfficialApi> official_api;
+    bool web_mode{false}, official_session{false}, was_session{false};
+    ULONGLONG last_web_second{0};
     RECT settings_rect{}, theme_rect{}, back_rect{}, language_en_rect{}, language_vi_rect{}, debug_toggle_rect{}, debug_log_link_rect{};
     RECT paste_rect{}, import_rect{}, connect_rect{}, how_to_use_rect{};
     RECT official_rect{}, github_rect{}, facebook_rect{}, relay_eye_rect{};
@@ -127,6 +136,41 @@ struct UiState {
     std::optional<glo::SessionConfig> config;
 };
 UiState* g_ui = nullptr;
+void web_emit(const std::string& message) {if(g_ui&&g_ui->web_mode)g_ui->webview.post_json(message);}
+void web_async_emit(HWND hwnd,std::string message) {
+    auto* payload=new std::string(std::move(message));
+    if(!PostMessageW(hwnd,WM_GLO_WEB_EVENT,0,reinterpret_cast<LPARAM>(payload)))delete payload;
+}
+std::string json_escape(const std::string&);
+void web_connection_snapshot(){
+    if(!g_ui||!g_ui->web_mode)return;
+    const auto snap=g_ui->client.snapshot();
+    const bool active=snap.phase!=glo::UiPhase::Disconnected||snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load();
+    std::string phase="disconnected";
+    if(snap.state==glo::ConnectionState::Connecting)phase="connecting";
+    else if(snap.phase==glo::UiPhase::ConnectedWaitingForGame)phase="waiting";
+    else if(snap.phase==glo::UiPhase::ConnectedStandby)phase="standby";
+    else if(snap.phase==glo::UiPhase::Gameplay)phase="gameplay";
+    const std::string route=snap.phase==glo::UiPhase::Gameplay?(snap.active_route==glo::ActiveRoute::Relay?"RELAY":"DIRECT"):"WAITING";
+    const auto number=[](const std::optional<double>& v)->std::string {return v&&std::isfinite(*v)&&*v>=0?std::to_string(*v):"null";};
+    const bool no_stats=snap.phase!=glo::UiPhase::Gameplay||snap.active_route==glo::ActiveRoute::Direct;
+    std::string node;
+    if(g_ui->config){
+        if(g_ui->official_session)node=g_ui->config->relay_name;
+        else if(g_ui->relay_endpoint_visible)node=g_ui->config->relay_host+":"+std::to_string(g_ui->config->relay_port);
+        else node="Protected";
+    }
+    const unsigned rem=snap.session_remaining_seconds;
+    char left[32]{};std::snprintf(left,sizeof(left),"%02u:%02u:%02u",rem/3600,(rem%3600)/60,rem%60);
+    std::string out="{\"type\":\"connection\",\"connection\":{";
+    out+="\"active\":"+std::string(active?"true":"false")+",\"source\":\""+(g_ui->official_session?std::string("official"):std::string("custom"))+"\",";
+    out+="\"phase\":\""+phase+"\",\"route\":\""+route+"\",";
+    out+="\"ping_ms\":"+(no_stats?"null":number(snap.gameplay_ping_ms))+",\"loss_pct\":"+(no_stats?"null":number(snap.gameplay_loss_pct))+",";
+    out+="\"left\":\""+std::string(left)+"\",\"node\":\""+json_escape(node)+"\",\"message\":\""+json_escape(snap.message)+"\"},\"waiting\":"+(g_ui->handoff_task?"true":"false")+"}";
+    web_emit(out);
+    if(g_ui->was_session&&!active&&snap.error&&snap.error->code==glo::ClientErrorCode::SessionExpired)web_emit("{\"type\":\"expired\"}");
+    g_ui->was_session=active;
+}
 
 bool point_in(const RECT& r, LPARAM lp) {
     POINT p{static_cast<short>(LOWORD(lp)), static_cast<short>(HIWORD(lp))};
@@ -684,6 +728,8 @@ void start_handoff_task(const std::wstring& uri,bool connect){
 void perform_handoff_connect(const std::wstring& uri){start_handoff_task(uri,true);}
 
 void handle_handoff_uri(const std::wstring& uri){
+    if(uri==L"glo://open"||uri==L"glo://open/"){ShowWindow(g_ui->window,SW_RESTORE);SetForegroundWindow(g_ui->window);return;}
+    g_ui->official_session=false;
     // External URI always returns to Main before starting an in-app modal.
     if(g_ui->page!=UiPage::Main){g_ui->page=UiPage::Main;InvalidateRect(g_ui->window,nullptr,FALSE);}
     const auto safe=handoff_uri_safe_summary(uri);
@@ -713,17 +759,20 @@ void finish_handoff_task(HWND hwnd){
     g_ui->handoff_task.reset();g_ui->modal=InAppModal::None;
     InvalidateRect(hwnd,nullptr,FALSE);
     if(!error.empty()){
+        if(g_ui->web_mode){web_emit("{\"type\":\"error\",\"message\":\"Could not complete provider handoff.\"}");web_connection_snapshot();return;}
         g_ui->app_log.warn("URI005",connecting?"event=handoff_connect_failed":"event=handoff_inspect_failed");
         MessageBoxW(hwnd,error.c_str(),L"GLO - Handoff",MB_OK|MB_ICONERROR);return;
     }
     if(!connecting){
         g_ui->pending_handoff_game=std::move(game);g_ui->pending_handoff_source=std::move(source);
         g_ui->modal=InAppModal::HandoffConfirm;
+        if(g_ui->web_mode){g_ui->modal=InAppModal::None;web_emit("{\"type\":\"custom-offer\",\"game\":\""+json_escape(narrow(g_ui->pending_handoff_game))+"\",\"source\":\""+json_escape(narrow(g_ui->pending_handoff_source))+"\"}");}
     }else if(!config.empty()){
         g_ui->app_log.info("URI010","event=handoff_redeem_ok");
         if(parse_and_apply(config,trusted?ConfigSource::OfficialHandoff:ConfigSource::ThirdPartyHandoff))connect_loaded();
     }else MessageBoxW(hwnd,L"Incomplete handoff response.",L"GLO - Handoff",MB_OK|MB_ICONERROR);
     InvalidateRect(hwnd,nullptr,FALSE);
+    web_connection_snapshot();
 }
 
 void begin_disconnect(HWND hwnd){if(g_ui->disconnecting.exchange(true))return;if(g_ui->disconnect_thread.joinable())g_ui->disconnect_thread.join();g_ui->disconnect_thread=std::thread([hwnd]{g_ui->client.disconnect();PostMessageW(hwnd,WM_GLO_DISCONNECT_DONE,0,0);});InvalidateRect(hwnd,nullptr,FALSE);}
@@ -771,6 +820,7 @@ void paint_settings(HDC dc,const RECT&client,const Palette&p){
 }
 
 void paint_ui(HWND hwnd,HDC target){
+    if(g_ui->web_mode)return;
     RECT client{};GetClientRect(hwnd,&client);const int w=client.right,h=client.bottom;
     HDC dc=CreateCompatibleDC(target);HBITMAP bitmap=CreateCompatibleBitmap(target,std::max(1,w),std::max(1,h));auto old_bitmap=SelectObject(dc,bitmap);
     const Palette p=palette(g_ui->theme);HBRUSH bg=CreateSolidBrush(p.background);FillRect(dc,&client,bg);DeleteObject(bg);g_ui->how_to_use_rect=RECT{};g_ui->relay_eye_rect=RECT{};
@@ -988,17 +1038,89 @@ void show_tray_menu(HWND hwnd){
     else if(command==kTrayQuitId)begin_quit(hwnd);
 }
 
-LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){case WM_CREATE:g_ui->window=hwnd;g_ui->font_title=make_font(26,FW_BOLD);g_ui->font_hero=make_font(27,FW_BOLD);g_ui->font_body=make_font(14,FW_NORMAL);g_ui->font_label=make_font(11,FW_BOLD);g_ui->font_metric=make_font(18,FW_BOLD);g_ui->font_link=make_font(14,FW_NORMAL,true);g_ui->icon_app_big=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));g_ui->icon_app_small=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_DEFAULTCOLOR));if(g_ui->icon_app_big)SendMessageW(hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(g_ui->icon_app_big));if(g_ui->icon_app_small)SendMessageW(hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(g_ui->icon_app_small));g_ui->icon_settings_light=load_ui_icon(IDI_GLO_SETTINGS_LIGHT);g_ui->icon_settings_dark=load_ui_icon(IDI_GLO_SETTINGS_DARK);g_ui->icon_sun_light=load_ui_icon(IDI_GLO_SUN_LIGHT);g_ui->icon_sun_dark=load_ui_icon(IDI_GLO_SUN_DARK);g_ui->icon_moon_light=load_ui_icon(IDI_GLO_MOON_LIGHT);g_ui->icon_moon_dark=load_ui_icon(IDI_GLO_MOON_DARK);g_ui->icon_back_light=load_ui_icon(IDI_GLO_BACK_LIGHT);g_ui->icon_back_dark=load_ui_icon(IDI_GLO_BACK_DARK);g_ui->icon_official_light=load_ui_icon(IDI_GLO_OFFICIAL_LIGHT);g_ui->icon_official_dark=load_ui_icon(IDI_GLO_OFFICIAL_DARK);g_ui->icon_github_light=load_ui_icon(IDI_GLO_GITHUB_LIGHT);g_ui->icon_github_dark=load_ui_icon(IDI_GLO_GITHUB_DARK);g_ui->icon_facebook_light=load_ui_icon(IDI_GLO_FACEBOOK_LIGHT);g_ui->icon_facebook_dark=load_ui_icon(IDI_GLO_FACEBOOK_DARK);g_ui->icon_paste_light=load_ui_icon(IDI_GLO_PASTE_LIGHT);g_ui->icon_paste_dark=load_ui_icon(IDI_GLO_PASTE_DARK);g_ui->icon_import_light=load_ui_icon(IDI_GLO_IMPORT_LIGHT);g_ui->icon_import_dark=load_ui_icon(IDI_GLO_IMPORT_DARK);g_ui->icon_connect_light=load_ui_icon(IDI_GLO_CONNECT_LIGHT);g_ui->icon_connect_dark=load_ui_icon(IDI_GLO_CONNECT_DARK);g_ui->icon_disconnect_light=load_ui_icon(IDI_GLO_DISCONNECT_LIGHT);g_ui->icon_disconnect_dark=load_ui_icon(IDI_GLO_DISCONNECT_DARK);g_ui->icon_tray_connected=make_connected_tray_icon(g_ui->icon_app_small);update_tray_icon(true);SetTimer(hwnd,42,250,nullptr);return 0;
+void on_web_action(const std::wstring& raw) {
+    if(!g_ui||!g_ui->official_api)return;
+    const std::string data=narrow(raw);
+    const auto action=json_string_field(data,"action");
+    if(!action)return;
+    if(*action=="ui.ready"){
+        web_emit("{\"type\":\"init\",\"theme\":\""+std::string(g_ui->theme==ThemeMode::Dark?"dark":"light")+"\",\"language\":\""+std::string(g_ui->language==Language::Vietnamese?"vi":"en")+"\",\"debug\":"+(g_ui->debug_logging?"true":"false")+"}");
+        g_ui->official_api->restore();web_connection_snapshot();return;
+    }
+    if(*action=="auth.redeem"){
+        const auto code=json_string_field(data,"code");if(code&&code->size()<=16)g_ui->official_api->redeem(*code);
+    }else if(*action=="auth.logout")g_ui->official_api->logout();
+    else if(*action=="open.login")open_external_link(g_ui->window,L"https://gloptimizer.com/auth/",L"GLO Login");
+    else if(*action=="open.time")open_external_link(g_ui->window,L"https://gloptimizer.com/time/",L"GLO Time Bank");
+    else if(*action=="open.external"){
+        const auto url=json_string_field(data,"url");
+        if(url&&(*url=="https://gloptimizer.com"||*url=="https://github.com/sonictype41/Game-Latency-Optimizer"||*url=="https://www.facebook.com/an.nguyen.671146/"))open_external_link(g_ui->window,widen(*url),L"External Link");
+    }else if(*action=="services.connect"){
+        if(connection_active())return;
+        const auto game=json_string_field(data,"game"),region=json_string_field(data,"region");
+        if(game&&region&&(*game=="roblox"||*game=="valorant"||*game=="pubg")&&region->size()<=8){g_ui->official_session=true;g_ui->official_api->prepare(*game,*region);}
+    }else if(*action=="custom.inspect"){
+        auto uri=json_string_field(data,"uri");if(uri&&uri->size()<4096)handle_handoff_uri(widen(*uri));
+    }else if(*action=="custom.paste"){
+        std::string clip,error;if(clipboard_text(clip,error)&&clip.size()<4096)handle_handoff_uri(widen(clip));else web_emit("{\"type\":\"error\",\"message\":\"Clipboard does not contain a valid URI.\"}");
+    }else if(*action=="custom.cancel"){
+        g_ui->pending_handoff_uri.clear();
+    }else if(*action=="custom.confirm"){
+        if(!g_ui->pending_handoff_uri.empty()){
+            std::wstring uri=g_ui->pending_handoff_uri;g_ui->pending_handoff_uri.clear();perform_handoff_connect(uri);
+        }
+    }else if(*action=="disconnect"){
+        if(connection_active())begin_disconnect(g_ui->window);
+    }else if(*action=="settings.theme"){
+        const auto v=json_string_field(data,"theme");if(v){ThemeMode old=g_ui->theme;g_ui->theme=*v=="dark"?ThemeMode::Dark:ThemeMode::Light;persist_settings(g_ui->window,old,g_ui->language,g_ui->debug_logging);}
+    }else if(*action=="settings.language"){
+        const auto v=json_string_field(data,"language");if(v){auto old=g_ui->language;g_ui->language=*v=="vi"?Language::Vietnamese:Language::English;persist_settings(g_ui->window,g_ui->theme,old,g_ui->debug_logging);}
+    }else if(*action=="settings.debug"){
+        const auto v=data.find("\"enabled\":true")!=std::string::npos;
+        auto old=g_ui->debug_logging;g_ui->debug_logging=v;persist_settings(g_ui->window,g_ui->theme,g_ui->language,old);
+    }else if(*action=="settings.log")open_debug_log_file(g_ui->window);
+}
+
+LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
+    case WM_GLO_WEB_START: {
+        wchar_t binary[32768]{};DWORD n=GetModuleFileNameW(nullptr,binary,32768);
+        std::wstring error;
+        if(!n||n>=32768||!g_ui->webview.start(hwnd,std::filesystem::path(binary).parent_path()/L"ui",on_web_action,error)){
+            MessageBoxW(hwnd,error.empty()?L"WebView2 is unavailable. Reinstall GLO and Microsoft WebView2 Evergreen Runtime.":error.c_str(),L"GLO - WebView2",MB_OK|MB_ICONERROR);
+            ShellExecuteW(hwnd,L"open",L"https://developer.microsoft.com/en-us/microsoft-edge/webview2/",nullptr,nullptr,SW_SHOWNORMAL);
+            PostMessageW(hwnd,WM_GLO_SHUTDOWN_DONE,0,0);return 0;
+        }
+        g_ui->web_mode=true;
+        g_ui->official_api=std::make_unique<OfficialApi>([hwnd](std::string json){web_async_emit(hwnd,std::move(json));});
+        return 0;
+    }
+    case WM_GLO_WEB_EVENT: {
+        std::unique_ptr<std::string> payload(reinterpret_cast<std::string*>(lp));
+        if(!payload||!g_ui->web_mode)return 0;
+        const auto type=json_string_field(*payload,"type");
+        if(type&&*type=="prepared"){
+            const auto token=json_string_field(*payload,"token");
+            if(token&&!connection_active()){
+                // The Official API supplies a one-time handoff token. The existing
+                // relay RTT/probe/redeem pipeline remains unchanged.
+                const auto uri=L"glo://connect/?v=1&issuer=https%3A%2F%2Fgloptimizer.com&endpoint=https%3A%2F%2Fapi.gloptimizer.com&token="+widen(*token);
+                perform_handoff_connect(uri);
+            }else web_emit("{\"type\":\"error\",\"message\":\"Cannot start another connection.\"}");
+        }else g_ui->webview.post_json(*payload);
+        return 0;
+    }
+    case WM_SIZE:if(g_ui&&g_ui->web_mode)g_ui->webview.resize();break;
+    case WM_CREATE:g_ui->window=hwnd;g_ui->font_title=make_font(26,FW_BOLD);g_ui->font_hero=make_font(27,FW_BOLD);g_ui->font_body=make_font(14,FW_NORMAL);g_ui->font_label=make_font(11,FW_BOLD);g_ui->font_metric=make_font(18,FW_BOLD);g_ui->font_link=make_font(14,FW_NORMAL,true);g_ui->icon_app_big=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));g_ui->icon_app_small=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_DEFAULTCOLOR));if(g_ui->icon_app_big)SendMessageW(hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(g_ui->icon_app_big));if(g_ui->icon_app_small)SendMessageW(hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(g_ui->icon_app_small));g_ui->icon_settings_light=load_ui_icon(IDI_GLO_SETTINGS_LIGHT);g_ui->icon_settings_dark=load_ui_icon(IDI_GLO_SETTINGS_DARK);g_ui->icon_sun_light=load_ui_icon(IDI_GLO_SUN_LIGHT);g_ui->icon_sun_dark=load_ui_icon(IDI_GLO_SUN_DARK);g_ui->icon_moon_light=load_ui_icon(IDI_GLO_MOON_LIGHT);g_ui->icon_moon_dark=load_ui_icon(IDI_GLO_MOON_DARK);g_ui->icon_back_light=load_ui_icon(IDI_GLO_BACK_LIGHT);g_ui->icon_back_dark=load_ui_icon(IDI_GLO_BACK_DARK);g_ui->icon_official_light=load_ui_icon(IDI_GLO_OFFICIAL_LIGHT);g_ui->icon_official_dark=load_ui_icon(IDI_GLO_OFFICIAL_DARK);g_ui->icon_github_light=load_ui_icon(IDI_GLO_GITHUB_LIGHT);g_ui->icon_github_dark=load_ui_icon(IDI_GLO_GITHUB_DARK);g_ui->icon_facebook_light=load_ui_icon(IDI_GLO_FACEBOOK_LIGHT);g_ui->icon_facebook_dark=load_ui_icon(IDI_GLO_FACEBOOK_DARK);g_ui->icon_paste_light=load_ui_icon(IDI_GLO_PASTE_LIGHT);g_ui->icon_paste_dark=load_ui_icon(IDI_GLO_PASTE_DARK);g_ui->icon_import_light=load_ui_icon(IDI_GLO_IMPORT_LIGHT);g_ui->icon_import_dark=load_ui_icon(IDI_GLO_IMPORT_DARK);g_ui->icon_connect_light=load_ui_icon(IDI_GLO_CONNECT_LIGHT);g_ui->icon_connect_dark=load_ui_icon(IDI_GLO_CONNECT_DARK);g_ui->icon_disconnect_light=load_ui_icon(IDI_GLO_DISCONNECT_LIGHT);g_ui->icon_disconnect_dark=load_ui_icon(IDI_GLO_DISCONNECT_DARK);g_ui->icon_tray_connected=make_connected_tray_icon(g_ui->icon_app_small);update_tray_icon(true);SetTimer(hwnd,42,250,nullptr);PostMessageW(hwnd,WM_GLO_WEB_START,0,0);return 0;
     case WM_COPYDATA:{auto*cds=reinterpret_cast<COPYDATASTRUCT*>(lp);if(!cds||cds->dwData!=kHandoffCopyData||!cds->lpData||cds->cbData<sizeof(wchar_t)||cds->cbData>16384)return FALSE;if(cds->cbData%sizeof(wchar_t))return FALSE;auto* begin=static_cast<const wchar_t*>(cds->lpData);auto* end=std::find(begin,begin+cds->cbData/sizeof(wchar_t),L'\0');if(end==begin+cds->cbData/sizeof(wchar_t))return FALSE;std::wstring uri(begin,end);auto pending=std::make_unique<std::wstring>(std::move(uri));
         if(!PostMessageW(hwnd,WM_GLO_INCOMING_URI,0,reinterpret_cast<LPARAM>(pending.get())))return FALSE;
         pending.release();return TRUE;}
     case WM_GLO_INCOMING_URI:{std::unique_ptr<std::wstring> uri(reinterpret_cast<std::wstring*>(lp));
         if(!uri)return 0;ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);
         handle_handoff_uri(*uri);return 0;}
-    case WM_TIMER:if(wp==42){const auto snap=g_ui->client.snapshot();bool repaint=snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load()||g_ui->modal==InAppModal::HandoffBusy;if(g_ui->action_feedback!=ActionFeedback::None){if(GetTickCount64()>=g_ui->action_feedback_until_ms){g_ui->action_feedback=ActionFeedback::None;g_ui->action_feedback_until_ms=0;}repaint=true;}if(repaint)InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon();check_session_warnings(snap);return 0;}break;
+    case WM_TIMER:if(wp==42){const auto snap=g_ui->client.snapshot();bool repaint=snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load()||g_ui->modal==InAppModal::HandoffBusy;if(g_ui->action_feedback!=ActionFeedback::None){if(GetTickCount64()>=g_ui->action_feedback_until_ms){g_ui->action_feedback=ActionFeedback::None;g_ui->action_feedback_until_ms=0;}repaint=true;}if(repaint)InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon();check_session_warnings(snap);if(g_ui->web_mode&&GetTickCount64()/1000!=g_ui->last_web_second){g_ui->last_web_second=GetTickCount64()/1000;web_connection_snapshot();if(g_ui->official_api&&g_ui->last_web_second%30==0)g_ui->official_api->refresh_wallet();}return 0;}break;
     case WM_PAINT:{PAINTSTRUCT ps{};HDC dc=BeginPaint(hwnd,&ps);paint_ui(hwnd,dc);EndPaint(hwnd,&ps);return 0;}case WM_ERASEBKGND:return 1;
     case WM_SETCURSOR:if(LOWORD(lp)==HTCLIENT){POINT pt{};GetCursorPos(&pt);ScreenToClient(hwnd,&pt);if(g_ui->modal!=InAppModal::None){const bool hot=point_in(g_ui->modal_cancel_rect,pt)||point_in(g_ui->modal_primary_rect,pt)||point_in(g_ui->modal_uri_rect,pt)||point_in(g_ui->modal_paste_rect,pt)||point_in(g_ui->modal_import_rect,pt);if(hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}break;}const bool common=point_in(g_ui->official_rect,pt)||point_in(g_ui->github_rect,pt)||point_in(g_ui->facebook_rect,pt)||point_in(g_ui->theme_rect,pt);const bool page_hot=g_ui->page==UiPage::Settings?(point_in(g_ui->back_rect,pt)||point_in(g_ui->language_en_rect,pt)||point_in(g_ui->language_vi_rect,pt)||point_in(g_ui->debug_toggle_rect,pt)||point_in(g_ui->debug_log_link_rect,pt)):(point_in(g_ui->settings_rect,pt)||point_in(g_ui->paste_rect,pt)||point_in(g_ui->import_rect,pt)||point_in(g_ui->connect_rect,pt)||point_in(g_ui->how_to_use_rect,pt)||point_in(g_ui->relay_eye_rect,pt));if(common||page_hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}}break;
-    case WM_LBUTTONUP:{
+    case WM_LBUTTONUP:{if(g_ui->web_mode)return 0;
         if(g_ui->modal!=InAppModal::None){
             if(point_in(g_ui->modal_cancel_rect,lp)){if(g_ui->modal==InAppModal::HandoffBusy)cancel_handoff();else{g_ui->modal=InAppModal::None;InvalidateRect(hwnd,nullptr,FALSE);}return 0;}
             if(g_ui->modal==InAppModal::HandoffConfirm&&point_in(g_ui->modal_primary_rect,lp)){
@@ -1037,14 +1159,14 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){ca
         if(point_in(g_ui->connect_rect,lp)){if(active){if(!g_ui->disconnecting.load()){g_ui->modal=InAppModal::DisconnectConfirm;InvalidateRect(hwnd,nullptr,FALSE);}}else connect_loaded();return 0;}
         break;
     }
-    case WM_KEYDOWN:
+    case WM_KEYDOWN:if(g_ui->web_mode)return 0;
         if(wp==VK_ESCAPE&&g_ui->modal!=InAppModal::None){if(g_ui->modal==InAppModal::HandoffBusy)cancel_handoff();else{g_ui->modal=InAppModal::None;InvalidateRect(hwnd,nullptr,FALSE);}return 0;}
         if(g_ui->modal!=InAppModal::None)return 0;
         if(wp==VK_ESCAPE&&g_ui->page==UiPage::Settings){g_ui->page=UiPage::Main;InvalidateRect(hwnd,nullptr,FALSE);return 0;}
         if(wp==VK_RETURN&&g_ui->page==UiPage::Main){const auto snap=g_ui->client.snapshot();if(snap.phase==glo::UiPhase::Disconnected&&snap.state!=glo::ConnectionState::Connecting)connect_loaded();return 0;}break;
-    case WM_GLO_HANDOFF_DONE:finish_handoff_task(hwnd);return 0;
-    case WM_GLO_UPDATE:{const auto s=g_ui->client.snapshot();if(s.session_id!=0&&!g_ui->config_consumed){g_ui->config_consumed=true;g_ui->options.session_grant.clear();if(g_ui->config)g_ui->config->grant.clear();}if(s.phase==glo::UiPhase::Disconnected&&g_ui->config_consumed&&!g_ui->disconnecting.load())clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);UpdateWindow(hwnd);update_tray_icon();check_session_warnings(s);if(s.error&&s.error->generation&&s.error->generation!=g_ui->last_error_generation){g_ui->last_error_generation=s.error->generation;const auto[t,m]=localized_error(*s.error);MessageBoxW(hwnd,m.c_str(),t.c_str(),MB_OK|MB_ICONERROR|MB_TASKMODAL);}return 0;}
-    case WM_GLO_DISCONNECT_DONE:if(g_ui->disconnect_thread.joinable())g_ui->disconnect_thread.join();g_ui->disconnecting=false;if(g_ui->config_consumed)clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon(true);return 0;
+    case WM_GLO_HANDOFF_DONE:finish_handoff_task(hwnd);web_connection_snapshot();return 0;
+    case WM_GLO_UPDATE:{const auto s=g_ui->client.snapshot();if(s.session_id!=0&&!g_ui->config_consumed){g_ui->config_consumed=true;g_ui->options.session_grant.clear();if(g_ui->config)g_ui->config->grant.clear();}if(s.phase==glo::UiPhase::Disconnected&&g_ui->config_consumed&&!g_ui->disconnecting.load())clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);UpdateWindow(hwnd);update_tray_icon();check_session_warnings(s);if(s.error&&s.error->generation&&s.error->generation!=g_ui->last_error_generation){g_ui->last_error_generation=s.error->generation;const auto[t,m]=localized_error(*s.error);if(g_ui->web_mode){if(s.error->code==glo::ClientErrorCode::SessionExpired)web_emit("{\"type\":\"expired\"}");else web_emit("{\"type\":\"error\",\"message\":\""+json_escape(narrow(m))+"\"}");}else MessageBoxW(hwnd,m.c_str(),t.c_str(),MB_OK|MB_ICONERROR|MB_TASKMODAL);}return 0;}
+    case WM_GLO_DISCONNECT_DONE:if(g_ui->disconnect_thread.joinable())g_ui->disconnect_thread.join();g_ui->disconnecting=false;if(g_ui->config_consumed)clear_config_after_use();InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon(true);web_connection_snapshot();if(g_ui->official_api)g_ui->official_api->refresh_wallet();return 0;
     case WM_GLO_TRAY:
         if(lp==WM_LBUTTONUP||lp==WM_LBUTTONDBLCLK){show_main_window(hwnd);return 0;}
         if(lp==WM_RBUTTONUP||lp==WM_CONTEXTMENU){show_tray_menu(hwnd);return 0;}
@@ -1052,11 +1174,11 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){ca
     case WM_POWERBROADCAST:if(wp==PBT_APMSUSPEND){if(!g_ui->disconnecting.load())begin_disconnect(hwnd);return TRUE;}break;
     case WM_CLOSE:ShowWindow(hwnd,SW_HIDE);return 0;
     case WM_GLO_SHUTDOWN_DONE:if(g_ui->shutdown_thread.joinable())g_ui->shutdown_thread.join();DestroyWindow(hwnd);return 0;
-    case WM_DESTROY:if(g_ui->handoff_task)g_ui->handoff_task->cancelled.store(true);g_ui->handoff_task.reset();remove_tray_icon();for(HFONT f:{g_ui->font_title,g_ui->font_hero,g_ui->font_body,g_ui->font_label,g_ui->font_metric,g_ui->font_link})if(f)DeleteObject(f);for(HICON i:{g_ui->icon_settings_light,g_ui->icon_settings_dark,g_ui->icon_sun_light,g_ui->icon_sun_dark,g_ui->icon_moon_light,g_ui->icon_moon_dark,g_ui->icon_back_light,g_ui->icon_back_dark,g_ui->icon_official_light,g_ui->icon_official_dark,g_ui->icon_github_light,g_ui->icon_github_dark,g_ui->icon_facebook_light,g_ui->icon_facebook_dark,g_ui->icon_paste_light,g_ui->icon_paste_dark,g_ui->icon_import_light,g_ui->icon_import_dark,g_ui->icon_connect_light,g_ui->icon_connect_dark,g_ui->icon_disconnect_light,g_ui->icon_disconnect_dark,g_ui->icon_app_big,g_ui->icon_app_small,g_ui->icon_tray_connected})if(i)DestroyIcon(i);PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,msg,wp,lp);}
+    case WM_DESTROY:if(g_ui->official_api){g_ui->official_api->stop();g_ui->official_api.reset();}g_ui->webview.stop();if(g_ui->handoff_task)g_ui->handoff_task->cancelled.store(true);g_ui->handoff_task.reset();remove_tray_icon();for(HFONT f:{g_ui->font_title,g_ui->font_hero,g_ui->font_body,g_ui->font_label,g_ui->font_metric,g_ui->font_link})if(f)DeleteObject(f);for(HICON i:{g_ui->icon_settings_light,g_ui->icon_settings_dark,g_ui->icon_sun_light,g_ui->icon_sun_dark,g_ui->icon_moon_light,g_ui->icon_moon_dark,g_ui->icon_back_light,g_ui->icon_back_dark,g_ui->icon_official_light,g_ui->icon_official_dark,g_ui->icon_github_light,g_ui->icon_github_dark,g_ui->icon_facebook_light,g_ui->icon_facebook_dark,g_ui->icon_paste_light,g_ui->icon_paste_dark,g_ui->icon_import_light,g_ui->icon_import_dark,g_ui->icon_connect_light,g_ui->icon_connect_dark,g_ui->icon_disconnect_light,g_ui->icon_disconnect_dark,g_ui->icon_app_big,g_ui->icon_app_small,g_ui->icon_tray_connected})if(i)DestroyIcon(i);PostQuitMessage(0);return 0;}return DefWindowProcW(hwnd,msg,wp,lp);}
 }
 
-int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR,int show){if(auto worker_exit=glo::run_network_worker_if_requested())return *worker_exit;SetProcessDPIAware();auto ui=std::make_unique<UiState>();g_ui=ui.get();g_ui->theme=system_looks_dark()?ThemeMode::Dark:ThemeMode::Light;load_settings();CommandArgs command;try{command=parse_args();}catch(const std::exception&e){MessageBoxW(nullptr,widen(e.what()).c_str(),L"GLO - Command line",MB_OK|MB_ICONERROR);return 64;}g_ui->options.dbg_log=g_ui->debug_logging;sync_frontend_debug_log(false);g_ui->app_log.info("APP001",std::string("event=start version=")+GLO_VERSION+" process=frontend");
+int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR,int show){if(auto worker_exit=glo::run_network_worker_if_requested())return *worker_exit;SetProcessDPIAware();const HRESULT com_hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(com_hr))return 3;auto ui=std::make_unique<UiState>();g_ui=ui.get();g_ui->theme=system_looks_dark()?ThemeMode::Dark:ThemeMode::Light;load_settings();CommandArgs command;try{command=parse_args();}catch(const std::exception&e){MessageBoxW(nullptr,widen(e.what()).c_str(),L"GLO - Command line",MB_OK|MB_ICONERROR);return 64;}g_ui->options.dbg_log=g_ui->debug_logging;sync_frontend_debug_log(false);g_ui->app_log.info("APP001",std::string("event=start version=")+GLO_VERSION+" process=frontend");
 HANDLE instance_mutex=CreateMutexW(nullptr,FALSE,kSingleInstanceMutex);if(!instance_mutex){MessageBoxW(nullptr,L"Could not create the GLO instance lock.",L"GLO",MB_OK|MB_ICONERROR);return 1;}if(GetLastError()==ERROR_ALREADY_EXISTS){HWND existing=nullptr;for(int i=0;i<30&&!existing;++i){existing=FindWindowW(kMainWindowClass,nullptr);if(!existing)Sleep(50);}if(existing){ShowWindow(existing,SW_RESTORE);SetForegroundWindow(existing);if(command.uri){COPYDATASTRUCT cds{};cds.dwData=kHandoffCopyData;cds.cbData=static_cast<DWORD>((command.uri->size()+1)*sizeof(wchar_t));cds.lpData=command.uri->data();DWORD_PTR forwarded=0;if(!SendMessageTimeoutW(existing,WM_COPYDATA,0,reinterpret_cast<LPARAM>(&cds),SMTO_ABORTIFHUNG|SMTO_BLOCK,2000,&forwarded)||forwarded!=TRUE){
                         MessageBoxW(nullptr,L"Could not forward GLO link to the existing window. Try again or reopen GLO.",L"GLO - URI",MB_OK|MB_ICONERROR);
                     }}}CloseHandle(instance_mutex);g_ui=nullptr;return 0;}
-WNDCLASSW wc{};wc.lpfnWndProc=wnd_proc;wc.hInstance=instance;wc.lpszClassName=kMainWindowClass;wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=static_cast<HICON>(LoadImageW(instance,MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));wc.hbrBackground=nullptr;if(!RegisterClassW(&wc)){g_ui->app_log.error("APP900","event=window_class_register_failed");CloseHandle(instance_mutex);return 1;}RECT wr{0,0,kClientWidth,kClientHeight};AdjustWindowRect(&wr,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,FALSE);HWND hwnd=CreateWindowExW(0,kMainWindowClass,L"Game Latency Optimizer",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,CW_USEDEFAULT,CW_USEDEFAULT,wr.right-wr.left,wr.bottom-wr.top,nullptr,nullptr,instance,nullptr);if(!hwnd){g_ui->app_log.error("APP901","event=window_create_failed");CloseHandle(instance_mutex);return 2;}ShowWindow(hwnd,show);UpdateWindow(hwnd);if(command.config){std::string text,error;if(read_text_file(*command.config,text,error)){parse_and_apply(text);}else MessageBoxW(hwnd,widen(error).c_str(),L"GLO - Config",MB_OK|MB_ICONERROR);}if(command.uri)handle_handoff_uri(*command.uri);MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}g_ui->app_log.info("APP002","event=shutdown process=frontend");CloseHandle(instance_mutex);g_ui=nullptr;return static_cast<int>(msg.wParam);}
+WNDCLASSW wc{};wc.lpfnWndProc=wnd_proc;wc.hInstance=instance;wc.lpszClassName=kMainWindowClass;wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=static_cast<HICON>(LoadImageW(instance,MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));wc.hbrBackground=nullptr;if(!RegisterClassW(&wc)){g_ui->app_log.error("APP900","event=window_class_register_failed");CloseHandle(instance_mutex);return 1;}RECT wr{0,0,kClientWidth,kClientHeight};AdjustWindowRect(&wr,WS_OVERLAPPEDWINDOW,FALSE);HWND hwnd=CreateWindowExW(0,kMainWindowClass,L"Game Latency Optimizer",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,wr.right-wr.left,wr.bottom-wr.top,nullptr,nullptr,instance,nullptr);if(!hwnd){g_ui->app_log.error("APP901","event=window_create_failed");CloseHandle(instance_mutex);return 2;}ShowWindow(hwnd,show);UpdateWindow(hwnd);if(command.config){std::string text,error;if(read_text_file(*command.config,text,error)){parse_and_apply(text);}else MessageBoxW(hwnd,widen(error).c_str(),L"GLO - Config",MB_OK|MB_ICONERROR);}if(command.uri)handle_handoff_uri(*command.uri);MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}g_ui->app_log.info("APP002","event=shutdown process=frontend");CloseHandle(instance_mutex);g_ui=nullptr;CoUninitialize();return static_cast<int>(msg.wParam);}

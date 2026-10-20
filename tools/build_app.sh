@@ -20,6 +20,10 @@ if [[ ! -f "$WINTUN_DLL" ]]; then
   "$PYTHON" "$ROOT/tools/fetch_wintun.py"
 fi
 "$PYTHON" "$ROOT/tools/verify_windows_resources.py" >/dev/null
+# WebView2 SDK is compile-time-only; users need only the shared Evergreen Runtime.
+WEBVIEW2_SDK="${GLO_WEBVIEW2_SDK_ROOT:-$ROOT/third_party/webview2/1.0.2739.15}"
+"$PYTHON" "$ROOT/tools/fetch_webview2_sdk.py" --destination "$WEBVIEW2_SDK"
+
 # VERSION and RELEASE are the public OSS release mirrors. Release packaging
 # updates them before publication; standalone checkouts never inspect service files.
 START_TS="$($PYTHON - <<'PY'
@@ -224,9 +228,9 @@ else
   fi
 fi
 if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
-  cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release -DSODIUM_ROOT="$SODIUM" -DGLO_STATIC_MINGW=ON "${LAUNCHER[@]}"
+  cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release -DSODIUM_ROOT="$SODIUM" -DGLO_STATIC_MINGW=ON -DGLO_WEBVIEW2_SDK_ROOT="$WEBVIEW2_SDK" "${LAUNCHER[@]}"
 else
-  cmake -S "$ROOT" -B "$BUILD" -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres -DSODIUM_ROOT="$SODIUM" -DGLO_STATIC_MINGW=ON -DCMAKE_BUILD_TYPE=Release "${LAUNCHER[@]}"
+  cmake -S "$ROOT" -B "$BUILD" -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres -DSODIUM_ROOT="$SODIUM" -DGLO_STATIC_MINGW=ON -DGLO_WEBVIEW2_SDK_ROOT="$WEBVIEW2_SDK" -DCMAKE_BUILD_TYPE=Release "${LAUNCHER[@]}"
 fi
 cmake --build "$BUILD" --target GLO --parallel "${JOBS:-4}"
 [[ -s "$BUILD/GLO.exe" && -s "$BUILD/GLO.build.json" ]] || { echo 'Missing executable or build identity' >&2; exit 1; }
@@ -234,7 +238,7 @@ cmake --build "$BUILD" --target GLO --parallel "${JOBS:-4}"
 # interrupted mutable tree is therefore treated as incomplete on the next run.
 printf '%s\n' "$SOURCE_FINGERPRINT" > "$FINGERPRINT_FILE.tmp.$$"
 mv -f "$FINGERPRINT_FILE.tmp.$$" "$FINGERPRINT_FILE"
-"$PYTHON" "$ROOT/tools/stamp_build_info.py" "$BUILD/GLO.exe" "$BUILD/GLO.build.json"; cp "$BUILD/GLO.exe" "$OUT_ROOT/app/glo-app-windows-amd64.exe"; cp "$BUILD/GLO.build.json" "$OUT_ROOT/app/glo-app-windows-amd64.build.json"
+"$PYTHON" "$ROOT/tools/stamp_build_info.py" "$BUILD/GLO.exe" "$BUILD/GLO.build.json"; cp "$BUILD/GLO.exe" "$OUT_ROOT/app/glo-app-windows-amd64.exe"; cp "$BUILD/GLO.build.json" "$OUT_ROOT/app/glo-app-windows-amd64.build.json"; cp "$BUILD/WebView2Loader.dll" "$OUT_ROOT/app/WebView2Loader.dll"; rm -rf "$OUT_ROOT/app/ui"; cp -a "$BUILD/ui" "$OUT_ROOT/app/ui"
 END_TS="$($PYTHON - <<'PY'
 import time;print(time.time())
 PY

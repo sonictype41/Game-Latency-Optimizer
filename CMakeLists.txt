@@ -170,10 +170,20 @@ if(WIN32)
     set_source_files_properties("${GLO_RC}" PROPERTIES GENERATED TRUE)
     add_executable(GLO WIN32
         app/frontend/main.cpp
+        app/frontend/webview_host.cpp
+        app/frontend/official_api.cpp
         ${GLO_RC})
     glo_client_policy(GLO)
-    target_include_directories(GLO PRIVATE app/core/include protocol/include)
-    target_link_libraries(GLO PRIVATE glo_client_core glo_session_config user32 gdi32 shell32 ole32 comdlg32 winhttp)
+    set(GLO_WEBVIEW2_SDK_ROOT "" CACHE PATH "Unpacked Microsoft.Web.WebView2 NuGet package root")
+    if(NOT EXISTS "${GLO_WEBVIEW2_SDK_ROOT}/build/native/include/WebView2.h")
+        message(FATAL_ERROR "WebView2 SDK missing: run tools/fetch_webview2_sdk.py or set GLO_WEBVIEW2_SDK_ROOT")
+    endif()
+    set(GLO_WEBVIEW2_LOADER "${GLO_WEBVIEW2_SDK_ROOT}/runtimes/win-x64/native/WebView2Loader.dll")
+    if(NOT EXISTS "${GLO_WEBVIEW2_LOADER}")
+        message(FATAL_ERROR "WebView2Loader.dll missing: ${GLO_WEBVIEW2_LOADER}")
+    endif()
+    target_include_directories(GLO PRIVATE app/core/include protocol/include "${GLO_WEBVIEW2_SDK_ROOT}/build/native/include")
+    target_link_libraries(GLO PRIVATE glo_client_core glo_session_config user32 gdi32 shell32 ole32 comdlg32 winhttp crypt32)
 
 
     if(MINGW AND GLO_STATIC_MINGW)
@@ -183,7 +193,11 @@ if(WIN32)
     add_custom_command(TARGET GLO POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${GLO_WINTUN_DLL}" "$<TARGET_FILE_DIR:GLO>/wintun.dll"
-        COMMENT "Copying verified Wintun amd64 DLL beside generic GLO client")
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${GLO_WEBVIEW2_LOADER}" "$<TARGET_FILE_DIR:GLO>/WebView2Loader.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/app/frontend/ui" "$<TARGET_FILE_DIR:GLO>/ui"
+        COMMENT "Staging Wintun, WebView2 loader and local GLO UI assets")
 else()
     message(STATUS "Windows client targets are skipped on this platform; protocol tests and Go relay remain buildable.")
 endif()

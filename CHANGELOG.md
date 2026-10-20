@@ -1,5 +1,20 @@
 # Changelog — public OSS releases only
 
+## [0.1.0-beta] - 2026-10-20
+
+### Added
+
+- Rebuilt the Windows application UI using locally packaged HTML/CSS/JS and Microsoft WebView2 Evergreen Runtime.
+- Added native one-time code sign-in, DPAPI-protected refresh sessions, Official Services, Time Bank and game/region selection.
+- Added API-driven Official handoff flow while preserving the existing Wintun/network worker, relay probing, and custom URI inspection/confirmation.
+- Added a connection dashboard with gameplay relay/direct state, latency/loss, session remaining, and node information.
+- Integrated theme, settings, account state, tray behavior and GLO Web links.
+- WebView2 SDK is a pinned build-time NuGet dependency; WebView2 Evergreen Runtime is needed on client machines.
+
+### Fixed
+
+- Replaced the website-led gameplay connection workflow with Native Booster while preserving custom URI handoff and relay policy behavior.
+
 ## [0.0.6-beta] - 2026-10-18
 
 ### Added
@@ -87,8 +102,6 @@
 - Windows exact host routes affect all traffic to selected game IPs; unrelated packets on a routed destination may be dropped. VALORANT routing and Vanguard compatibility require live Windows verification before broad rollout.
 - The notification display depends on Windows notification settings and Do Not Disturb.
 
-# Changelog — public OSS releases only
-
 ## [0.0.6-beta] - 2026-10-18
 
 ### Added
@@ -118,7 +131,6 @@
 ### Known limitations
 - **Limitations:** Windows host routes apply system-wide; third-party traffic to those hosts can be affected. Gameplay-only isolation is not guaranteed by Windows route tables. Windows live validation required.
 
-# Changelog
 
 All notable public changes to GLO OSS are documented here.
 
