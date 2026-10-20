@@ -62,7 +62,7 @@ void OfficialApi::load_refresh(){auto path=token_file();if(path.empty())return;s
 }
 bool OfficialApi::request(const wchar_t* method,const wchar_t* path,const std::string& body,std::string& reply,unsigned long& code,bool auth){
     reply.clear();code=0;
-    HINTERNET session=WinHttpOpen(L"GLO/0.1.0-beta",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
+    HINTERNET session=WinHttpOpen(L"GLO/0.1.2-beta",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
     if(!session)return false;
     WinHttpSetTimeouts(session,5000,5000,5000,8000);
     HINTERNET connection=WinHttpConnect(session,L"api.gloptimizer.com",INTERNET_DEFAULT_HTTPS_PORT,0);
@@ -79,7 +79,13 @@ bool OfficialApi::request(const wchar_t* method,const wchar_t* path,const std::s
     WinHttpCloseHandle(req);WinHttpCloseHandle(connection);WinHttpCloseHandle(session);return !!ok;
 }
 bool OfficialApi::renew(){if(refresh_.empty())return false;std::string reply;unsigned long code=0;
-    if(!request(L"POST",L"/app/auth/refresh","{\"refresh_token\":"+json_quote(refresh_)+"}",reply,code,false)||code!=200){refresh_.clear();access_.clear();store_refresh();send("{\"type\":\"auth\",\"logged\":false}");return false;}
+    const bool reached=request(L"POST",L"/app/auth/refresh","{\"refresh_token\":"+json_quote(refresh_)+"}",reply,code,false);
+    if(!reached||code!=200){
+        // Retain DPAPI credentials across network errors. Only a definitive auth
+        // rejection is proof the stored session is invalid.
+        if(reached&&(code==401||code==403)){refresh_.clear();access_.clear();store_refresh();}
+        return false;
+    }
     auto access=get_string(reply,"access_token"),refresh=get_string(reply,"refresh_token");
     if(access.empty()||refresh.empty())return false;access_=access;refresh_=refresh;store_refresh();return true;
 }
@@ -90,14 +96,21 @@ bool OfficialApi::authorized(const wchar_t* method,const wchar_t* path,const std
     return true;
 }
 void OfficialApi::fetch_details(){std::string reply;unsigned long status=0;
-    if(!authorized(L"GET",L"/app/me","",reply,status)||status!=200){send("{\"type\":\"auth\",\"logged\":false}");return;}
+    if(!authorized(L"GET",L"/app/me","",reply,status)||status!=200){
+        if(status==401||status==403){refresh_.clear();access_.clear();store_refresh();}
+        if(refresh_.empty())send("{\"type\":\"auth\",\"logged\":false}");
+        else send("{\"type\":\"auth\",\"status\":\"offline\"}");
+        return;
+    }
     const auto email=get_string(reply,"email");
-    send("{\"type\":\"auth\",\"logged\":true,\"email\":"+json_quote(email)+"}");
     auto balance=extract(reply,"balance",'{','}');if(!balance.empty())send("{\"type\":\"wallet\",\"wallet\":"+balance+"}");
     if(authorized(L"GET",L"/app/booster/catalog","",reply,status)&&status==200){
         auto games=extract(reply,"games",'[',']');auto regions=extract(reply,"regions",'[',']');
         if(!games.empty()&&!regions.empty())send("{\"type\":\"catalog\",\"games\":"+games+",\"regions\":"+regions+"}");
     }
+    // The UI stays on its loading state until account, balance and catalog
+    // requests have finished (or have been attempted).
+    send("{\"type\":\"auth\",\"logged\":true,\"email\":"+json_quote(email)+"}");
 }
 void OfficialApi::restore(){async([this](){load_refresh();if(!refresh_.empty())fetch_details();else send("{\"type\":\"auth\",\"logged\":false}");});}
 void OfficialApi::redeem(std::string code){async([this,code=std::move(code)](){std::string reply;unsigned long status=0;

@@ -58,8 +58,8 @@ constexpr UINT kTrayIconId = 1;
 constexpr UINT kTrayOpenId = 41001;
 constexpr UINT kTrayDisconnectId = 41002;
 constexpr UINT kTrayQuitId = 41003;
-constexpr int kClientWidth = 1040;
-constexpr int kClientHeight = 760;
+constexpr int kClientWidth = 1080;
+constexpr int kClientHeight = 830;
 constexpr wchar_t kMainWindowClass[] = L"GLOGenericClient";
 #define GLO_WIDEN_IMPL(x) L##x
 #define GLO_WIDEN(x) GLO_WIDEN_IMPL(x)
@@ -99,7 +99,7 @@ struct UiState {
     WebviewHost webview;
     std::unique_ptr<OfficialApi> official_api;
     bool web_mode{false}, official_session{false}, was_session{false};
-    bool optimize_memory_on_tray{true}, show_network_quality_graph{true};
+    bool optimize_memory_on_tray{true}, optimize_on_minimize{false}, show_network_quality_graph{true};
     bool api_restored{false}, ui_ready{false};
     std::wstring deferred_handoff_uri;
     std::string last_ui_mode{"services"}, last_ui_game{"valorant"}, last_ui_region{"SG"};
@@ -277,6 +277,7 @@ void load_settings() {
     else if(has_after("\"theme\"","\"light\"")) g_ui->theme=ThemeMode::Light;
     auto setting_bool=[&](const char* key,bool fallback){const auto pos=text.find(key);if(pos==std::string::npos)return fallback;const auto colon=text.find(':',pos);if(colon==std::string::npos)return fallback;const auto val=text.find_first_not_of(" \t\r\n",colon+1);if(val==std::string::npos)return fallback;if(text.compare(val,4,"true")==0)return true;if(text.compare(val,5,"false")==0)return false;return fallback;};
     g_ui->optimize_memory_on_tray=setting_bool("\"optimize_memory_on_tray\"",true);
+    g_ui->optimize_on_minimize=setting_bool("\"optimize_on_minimize\"",false);
     g_ui->show_network_quality_graph=setting_bool("\"show_network_quality_graph\"",true);
     auto k=text.find("\"debug_logging\""); if(k!=std::string::npos){auto c=text.find(':',k);if(c!=std::string::npos){auto v=text.find_first_not_of(" \t\r\n",c+1);if(v!=std::string::npos)g_ui->debug_logging=text.compare(v,4,"true")==0;}}
 }
@@ -287,6 +288,7 @@ bool save_settings() {
            <<"  \"theme\": \""<<(g_ui->theme==ThemeMode::Dark?"dark":"light")<<"\",\n"
            <<"  \"debug_logging\": "<<(g_ui->debug_logging?"true":"false")<<",\n"
            <<"  \"optimize_memory_on_tray\": "<<(g_ui->optimize_memory_on_tray?"true":"false")<<",\n"
+           <<"  \"optimize_on_minimize\": "<<(g_ui->optimize_on_minimize?"true":"false")<<",\n"
            <<"  \"show_network_quality_graph\": "<<(g_ui->show_network_quality_graph?"true":"false")<<"\n}\n"; if(!out)return false;}
     if(!MoveFileExW(temp.c_str(),final_path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){DeleteFileW(temp.c_str());return false;} return true;
 }
@@ -762,7 +764,10 @@ void start_handoff_task(const std::wstring& uri,bool connect){
     std::thread([task,uri,hwnd=g_ui->window]{run_handoff_task(task,uri,hwnd);}).detach();
 }
 
-void perform_handoff_connect(const std::wstring& uri){start_handoff_task(uri,true);}
+void perform_handoff_connect(const std::wstring& uri){
+    if(g_ui&&g_ui->web_mode)web_emit("{\"type\":\"connect-progress\",\"stage\":\"verifying\"}");
+    start_handoff_task(uri,true);
+}
 
 void handle_handoff_uri(const std::wstring& uri){
     if(uri==L"glo://open"||uri==L"glo://open/"){ShowWindow(g_ui->window,SW_RESTORE);SetForegroundWindow(g_ui->window);return;}
@@ -1091,7 +1096,7 @@ void on_web_action(const std::wstring& raw) {
     if(!action)return;
     if(*action=="ui.ready"){
         g_ui->ui_ready=true;
-        web_emit("{\"type\":\"init\",\"theme\":\""+std::string(g_ui->theme==ThemeMode::Dark?"dark":"light")+"\",\"language\":\""+std::string(g_ui->language==Language::Vietnamese?"vi":"en")+"\",\"debug\":"+(g_ui->debug_logging?"true":"false")+",\"optimize_memory\":"+(g_ui->optimize_memory_on_tray?"true":"false")+",\"show_graph\":"+(g_ui->show_network_quality_graph?"true":"false")+",\"mode\":\""+g_ui->last_ui_mode+"\",\"game\":\""+g_ui->last_ui_game+"\",\"region\":\""+g_ui->last_ui_region+"\"}");
+        web_emit("{\"type\":\"init\",\"theme\":\""+std::string(g_ui->theme==ThemeMode::Dark?"dark":"light")+"\",\"language\":\""+std::string(g_ui->language==Language::Vietnamese?"vi":"en")+"\",\"debug\":"+(g_ui->debug_logging?"true":"false")+",\"optimize_memory\":"+(g_ui->optimize_memory_on_tray?"true":"false")+",\"optimize_on_minimize\":"+(g_ui->optimize_on_minimize?"true":"false")+",\"show_graph\":"+(g_ui->show_network_quality_graph?"true":"false")+",\"mode\":\""+g_ui->last_ui_mode+"\",\"game\":\""+g_ui->last_ui_game+"\",\"region\":\""+g_ui->last_ui_region+"\"}");
         if(!g_ui->api_restored){g_ui->api_restored=true;g_ui->official_api->restore();}
         else g_ui->official_api->refresh_wallet();
         web_connection_snapshot();
@@ -1109,7 +1114,8 @@ void on_web_action(const std::wstring& raw) {
         if(region&&region->size()<=8&&std::all_of(region->begin(),region->end(),[](unsigned char c){return std::isalnum(c)||c=='-';}))g_ui->last_ui_region=*region;
         return;
     }
-    if(*action=="auth.redeem"){
+    if(*action=="auth.retry")g_ui->official_api->restore();
+    else if(*action=="auth.redeem"){
         const auto code=json_string_field(data,"code");if(code&&code->size()<=16)g_ui->official_api->redeem(*code);
     }else if(*action=="auth.logout")g_ui->official_api->logout();
     else if(*action=="open.login")open_external_link(g_ui->window,L"https://gloptimizer.com/auth/",L"GLO Login");
@@ -1144,6 +1150,10 @@ void on_web_action(const std::wstring& raw) {
         const auto prior=g_ui->optimize_memory_on_tray;
         g_ui->optimize_memory_on_tray=data.find("\"enabled\":true")!=std::string::npos;
         if(!save_settings()){g_ui->optimize_memory_on_tray=prior;web_emit("{\"type\":\"error\",\"message\":\"Failed to save memory optimization setting.\"}");}
+    }else if(*action=="settings.optimizeOnMinimize"){
+        const auto prior=g_ui->optimize_on_minimize;
+        g_ui->optimize_on_minimize=data.find("\"enabled\":true")!=std::string::npos;
+        if(!save_settings()){g_ui->optimize_on_minimize=prior;web_emit("{\"type\":\"error\",\"message\":\"Failed to save minimize setting.\"}");}
     }else if(*action=="settings.showGraph"){
         const auto prior=g_ui->show_network_quality_graph;
         g_ui->show_network_quality_graph=data.find("\"enabled\":true")!=std::string::npos;
@@ -1181,8 +1191,23 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
         }else if(g_ui->web_mode)g_ui->webview.post_json(*payload);
         return 0;
     }
+    case WM_GETMINMAXINFO: {
+        // Minimum usable client area. Cap to the monitor work area for small displays.
+        auto* info=reinterpret_cast<MINMAXINFO*>(lp);
+        RECT frame{0,0,kClientWidth,kClientHeight};
+        AdjustWindowRectEx(&frame,WS_OVERLAPPEDWINDOW,FALSE,0);
+        int minw=frame.right-frame.left,minh=frame.bottom-frame.top;
+        MONITORINFO monitor{};monitor.cbSize=sizeof(monitor);
+        if(GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor)){
+            minw=std::min(minw,monitor.rcWork.right-monitor.rcWork.left);
+            minh=std::min(minh,monitor.rcWork.bottom-monitor.rcWork.top);
+        }
+        info->ptMinTrackSize.x=std::max(640,minw);
+        info->ptMinTrackSize.y=std::max(500,minh);
+        return 0;
+    }
     case WM_SIZE:
-        if(wp==SIZE_MINIMIZED){PostMessageW(hwnd,WM_GLO_WEB_TRAY,0,0);return 0;}
+        if(wp==SIZE_MINIMIZED){if(g_ui&&g_ui->optimize_memory_on_tray&&g_ui->optimize_on_minimize)PostMessageW(hwnd,WM_GLO_WEB_TRAY,0,0);return 0;}
         if(g_ui&&g_ui->web_mode)g_ui->webview.resize();break;
     case WM_GLO_WEB_TRAY:if(IsIconic(hwnd))minimize_to_tray(hwnd);return 0;
     case WM_CREATE:g_ui->window=hwnd;g_ui->font_title=make_font(26,FW_BOLD);g_ui->font_hero=make_font(27,FW_BOLD);g_ui->font_body=make_font(14,FW_NORMAL);g_ui->font_label=make_font(11,FW_BOLD);g_ui->font_metric=make_font(18,FW_BOLD);g_ui->font_link=make_font(14,FW_NORMAL,true);g_ui->icon_app_big=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));g_ui->icon_app_small=static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(IDI_GLO_APP),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_DEFAULTCOLOR));if(g_ui->icon_app_big)SendMessageW(hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(g_ui->icon_app_big));if(g_ui->icon_app_small)SendMessageW(hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(g_ui->icon_app_small));g_ui->icon_settings_light=load_ui_icon(IDI_GLO_SETTINGS_LIGHT);g_ui->icon_settings_dark=load_ui_icon(IDI_GLO_SETTINGS_DARK);g_ui->icon_sun_light=load_ui_icon(IDI_GLO_SUN_LIGHT);g_ui->icon_sun_dark=load_ui_icon(IDI_GLO_SUN_DARK);g_ui->icon_moon_light=load_ui_icon(IDI_GLO_MOON_LIGHT);g_ui->icon_moon_dark=load_ui_icon(IDI_GLO_MOON_DARK);g_ui->icon_back_light=load_ui_icon(IDI_GLO_BACK_LIGHT);g_ui->icon_back_dark=load_ui_icon(IDI_GLO_BACK_DARK);g_ui->icon_official_light=load_ui_icon(IDI_GLO_OFFICIAL_LIGHT);g_ui->icon_official_dark=load_ui_icon(IDI_GLO_OFFICIAL_DARK);g_ui->icon_github_light=load_ui_icon(IDI_GLO_GITHUB_LIGHT);g_ui->icon_github_dark=load_ui_icon(IDI_GLO_GITHUB_DARK);g_ui->icon_facebook_light=load_ui_icon(IDI_GLO_FACEBOOK_LIGHT);g_ui->icon_facebook_dark=load_ui_icon(IDI_GLO_FACEBOOK_DARK);g_ui->icon_paste_light=load_ui_icon(IDI_GLO_PASTE_LIGHT);g_ui->icon_paste_dark=load_ui_icon(IDI_GLO_PASTE_DARK);g_ui->icon_import_light=load_ui_icon(IDI_GLO_IMPORT_LIGHT);g_ui->icon_import_dark=load_ui_icon(IDI_GLO_IMPORT_DARK);g_ui->icon_connect_light=load_ui_icon(IDI_GLO_CONNECT_LIGHT);g_ui->icon_connect_dark=load_ui_icon(IDI_GLO_CONNECT_DARK);g_ui->icon_disconnect_light=load_ui_icon(IDI_GLO_DISCONNECT_LIGHT);g_ui->icon_disconnect_dark=load_ui_icon(IDI_GLO_DISCONNECT_DARK);g_ui->icon_tray_connected=make_connected_tray_icon(g_ui->icon_app_small);update_tray_icon(true);SetTimer(hwnd,42,250,nullptr);PostMessageW(hwnd,WM_GLO_WEB_START,0,0);return 0;
@@ -1202,7 +1227,14 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
         }
         /* legacy timer send removed */
         return 0;}break;
-    case WM_PAINT:{PAINTSTRUCT ps{};HDC dc=BeginPaint(hwnd,&ps);if(g_ui->web_mode){RECT r{};GetClientRect(hwnd,&r);FillRect(dc,&r,static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));}else {RECT r{};GetClientRect(hwnd,&r);HBRUSH brush=CreateSolidBrush(g_ui->theme==ThemeMode::Dark?RGB(12,17,14):RGB(244,247,241));FillRect(dc,&r,brush);DeleteObject(brush);}EndPaint(hwnd,&ps);return 0;}case WM_ERASEBKGND:return 1;
+    case WM_PAINT:{PAINTSTRUCT ps{};HDC dc=BeginPaint(hwnd,&ps);if(g_ui->web_mode){RECT r{};GetClientRect(hwnd,&r);FillRect(dc,&r,static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));}else {RECT r{};GetClientRect(hwnd,&r);HBRUSH brush=CreateSolidBrush(g_ui->theme==ThemeMode::Dark?RGB(12,17,14):RGB(244,247,241));FillRect(dc,&r,brush);DeleteObject(brush);
+        if(!g_ui->ui_ready){
+            // Native fallback while the asynchronous WebView2 controller loads.
+            SetBkMode(dc,TRANSPARENT);
+            SetTextColor(dc,g_ui->theme==ThemeMode::Dark?RGB(181,243,106):RGB(71,121,41));
+            const wchar_t* loading=g_ui->language==Language::Vietnamese?L"Đang khởi tạo GLO...":L"Starting GLO...";
+            DrawTextW(dc,loading,-1,&r,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        }}EndPaint(hwnd,&ps);return 0;}case WM_ERASEBKGND:return 1;
     case WM_SETCURSOR:if(LOWORD(lp)==HTCLIENT){POINT pt{};GetCursorPos(&pt);ScreenToClient(hwnd,&pt);if(g_ui->modal!=InAppModal::None){const bool hot=point_in(g_ui->modal_cancel_rect,pt)||point_in(g_ui->modal_primary_rect,pt)||point_in(g_ui->modal_uri_rect,pt)||point_in(g_ui->modal_paste_rect,pt)||point_in(g_ui->modal_import_rect,pt);if(hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}break;}const bool common=point_in(g_ui->official_rect,pt)||point_in(g_ui->github_rect,pt)||point_in(g_ui->facebook_rect,pt)||point_in(g_ui->theme_rect,pt);const bool page_hot=g_ui->page==UiPage::Settings?(point_in(g_ui->back_rect,pt)||point_in(g_ui->language_en_rect,pt)||point_in(g_ui->language_vi_rect,pt)||point_in(g_ui->debug_toggle_rect,pt)||point_in(g_ui->debug_log_link_rect,pt)):(point_in(g_ui->settings_rect,pt)||point_in(g_ui->paste_rect,pt)||point_in(g_ui->import_rect,pt)||point_in(g_ui->connect_rect,pt)||point_in(g_ui->how_to_use_rect,pt)||point_in(g_ui->relay_eye_rect,pt));if(common||page_hot){SetCursor(LoadCursor(nullptr,IDC_HAND));return TRUE;}}break;
     case WM_LBUTTONUP:{if(g_ui->web_mode)return 0;
         if(g_ui->modal!=InAppModal::None){

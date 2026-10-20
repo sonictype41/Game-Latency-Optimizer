@@ -5,8 +5,8 @@ ROOT=Path(__file__).resolve().parents[1]
 
 class V011ClientContract(unittest.TestCase):
     def test_release(self):
-        self.assertEqual((ROOT/'VERSION').read_text(encoding='utf-8').strip(),'0.1.1')
-        self.assertEqual((ROOT/'RELEASE').read_text(encoding='utf-8').strip(),'0.1.1-beta')
+        self.assertEqual((ROOT/'VERSION').read_text(encoding='utf-8').strip(),'0.1.2')
+        self.assertEqual((ROOT/'RELEASE').read_text(encoding='utf-8').strip(),'0.1.2-beta')
     def test_custom_mode_no_account_and_svg(self):
         html=(ROOT/'app/frontend/ui/index.html').read_text(encoding='utf-8')
         js=(ROOT/'app/frontend/ui/app.js').read_text(encoding='utf-8')

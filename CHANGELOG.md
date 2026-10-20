@@ -1,5 +1,20 @@
 # Changelog — public OSS releases only
 
+## [0.1.2-beta] - 2026-10-20
+### Added
+- Separate titlebar Minimize from close-to-tray. By default, Minimize keeps the WebView2 UI alive; close-to-tray preserves the current optional UI memory release behavior.
+- Add a default-off subordinate setting to release WebView2 on titlebar Minimize when main memory optimization is enabled.
+- Set DPI-aware minimum window tracking dimensions, respecting the usable monitor size; center the Settings layout.
+- Restore r3-style hover/focus reveal of individual game Connect buttons with connection progress feedback.
+- Show native session restoration/loading progress instead of temporarily presenting the sign-in screen; preserve encrypted credentials on transient API failures.
+- On the Connected dashboard, hide Free Time Bank, put Disconnect at the bottom of the game card, and expand Session Left and Node when gameplay relay metrics are not available.
+### Fixed
+- Avoid false sign-out flashes during async account restoration and retain credentials during transient API outages.
+- Hide inapplicable Ping/Packet Loss cards and empty graph while waiting for gameplay.
+
+### Security and compatibility
+- No Wintun, routing protocol, relay admission, or Production API contract changes.
+
 ## [0.1.1-beta] - 2026-10-20
 ### Added
 - Default-on memory optimization when minimized to tray and optional relay quality chart.
