@@ -3,6 +3,7 @@
 #include <functional>
 #include <string>
 #include <filesystem>
+#include <memory>
 
 class WebviewHost final {
 public:
@@ -18,6 +19,6 @@ public:
     bool ready() const noexcept { return ready_; }
 private:
     class Internal;
-    Internal* internal_{nullptr};
+    std::shared_ptr<Internal> internal_;
     bool ready_{false};
 };

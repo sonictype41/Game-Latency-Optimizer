@@ -1,5 +1,15 @@
 # Changelog — public OSS releases only
 
+## [0.1.1-beta] - 2026-10-20
+### Added
+- Default-on memory optimization when minimized to tray and optional relay quality chart.
+- Native five-minute ping/loss ring buffer and separate Connected Dashboard.
+
+### Fixed
+- Services cards modeled after Production r3, full VI/EN interface switching, SVG icons, responsive settings layout.
+- Safer asynchronous WebView2 creation/destruction and renderer restoration from tray.
+- GLO C++/Wintun transport remains unchanged.
+
 ## [0.1.0-beta] - 2026-10-20
 
 ### Added

@@ -47,7 +47,7 @@ std::wstring from_utf8(const std::string& s) {
 }
 }
 
-class WebviewHost::Internal {
+class WebviewHost::Internal : public std::enable_shared_from_this<WebviewHost::Internal> {
 public:
     HWND parent{};
     ICoreWebView2Controller* controller{};
@@ -71,10 +71,10 @@ public:
         }
     };
     struct Message final:HandlerBase<ICoreWebView2WebMessageReceivedEventHandler> {
-        Internal* owner;
-        explicit Message(Internal* p):owner(p){}
+        std::weak_ptr<Internal> owner;
+        explicit Message(std::shared_ptr<Internal> p):owner(p){}
         HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2*,ICoreWebView2WebMessageReceivedEventArgs* args) override {
-            if(owner->closing) return S_OK;
+            auto shared=owner.lock(); if(!shared || shared->closing) return S_OK;
             LPWSTR src=nullptr;
             if(FAILED(args->get_Source(&src)))return S_OK;
             std::wstring origin=src?src:L"";if(src)CoTaskMemFree(src);
@@ -82,53 +82,53 @@ public:
             LPWSTR json=nullptr;
             if(SUCCEEDED(args->get_WebMessageAsJson(&json))&&json){
                 std::wstring text(json);CoTaskMemFree(json);
-                if(text.size()<=16384&&owner->callback)owner->callback(text);
+                if(text.size()<=16384&&shared->callback)shared->callback(text);
             }
             return S_OK;
         }
     };
     struct Controller final:HandlerBase<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler> {
-        Internal* owner;
-        explicit Controller(Internal* p):owner(p){}
+        std::weak_ptr<Internal> owner;
+        explicit Controller(std::shared_ptr<Internal> p):owner(p){}
         HRESULT STDMETHODCALLTYPE Invoke(HRESULT result,ICoreWebView2Controller* ctrl) override {
-            if(owner->closing)return S_OK;
+            auto shared=owner.lock(); if(!shared || shared->closing)return S_OK;
             if(FAILED(result)||!ctrl)return S_OK;
-            owner->controller=ctrl;ctrl->AddRef();
-            if(FAILED(ctrl->get_CoreWebView2(&owner->view)))return S_OK;
+            shared->controller=ctrl;ctrl->AddRef();
+            if(FAILED(ctrl->get_CoreWebView2(&shared->view)))return S_OK;
             ICoreWebView2Settings* settings=nullptr;
-            if(SUCCEEDED(owner->view->get_Settings(&settings))&&settings){
+            if(SUCCEEDED(shared->view->get_Settings(&settings))&&settings){
                 settings->put_AreDefaultContextMenusEnabled(FALSE);
                 settings->put_AreDevToolsEnabled(FALSE);
                 settings->put_AreHostObjectsAllowed(FALSE);
                 settings->put_IsWebMessageEnabled(TRUE);
                 settings->Release();
             }
-            auto* msg=new Message(owner);
-            if(SUCCEEDED(owner->view->add_WebMessageReceived(msg,&owner->msg_token)))owner->msg_registered=true;
+            auto* msg=new Message(shared);
+            if(SUCCEEDED(shared->view->add_WebMessageReceived(msg,&shared->msg_token)))shared->msg_registered=true;
             msg->Release();
             auto* nav=new Navigation();
-            if(SUCCEEDED(owner->view->add_NavigationStarting(nav,&owner->nav_token)))owner->nav_registered=true;
+            if(SUCCEEDED(shared->view->add_NavigationStarting(nav,&shared->nav_token)))shared->nav_registered=true;
             nav->Release();
             ICoreWebView2_3* view3=nullptr;
-            if(SUCCEEDED(owner->view->QueryInterface(IID_ICoreWebView2_3, reinterpret_cast<void**>(&view3)))&&view3){
-                const HRESULT mapping=view3->SetVirtualHostNameToFolderMapping(L"glo.local",owner->folder.c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
+            if(SUCCEEDED(shared->view->QueryInterface(IID_ICoreWebView2_3, reinterpret_cast<void**>(&view3)))&&view3){
+                const HRESULT mapping=view3->SetVirtualHostNameToFolderMapping(L"glo.local",shared->folder.c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
                 view3->Release();
                 if(SUCCEEDED(mapping)){
-                    RECT r{};GetClientRect(owner->parent,&r);ctrl->put_Bounds(r);ctrl->put_IsVisible(TRUE);
-                    owner->view->Navigate(L"https://glo.local/index.html");
-                    if(owner->ready)*owner->ready=true;
+                    RECT r{};GetClientRect(shared->parent,&r);ctrl->put_Bounds(r);ctrl->put_IsVisible(TRUE);
+                    shared->view->Navigate(L"https://glo.local/index.html");
+                    if(shared->ready)*shared->ready=true;
                 }
             }
             return S_OK;
         }
     };
     struct Environment final:HandlerBase<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler> {
-        Internal* owner;
-        explicit Environment(Internal* p):owner(p){}
+        std::weak_ptr<Internal> owner;
+        explicit Environment(std::shared_ptr<Internal> p):owner(p){}
         HRESULT STDMETHODCALLTYPE Invoke(HRESULT hr,ICoreWebView2Environment* env) override {
-            if(owner->closing||FAILED(hr)||!env)return S_OK;
-            auto* cb=new Controller(owner);
-            env->CreateCoreWebView2Controller(owner->parent,cb);
+            auto shared=owner.lock(); if(!shared||shared->closing||FAILED(hr)||!env)return S_OK;
+            auto* cb=new Controller(shared);
+            env->CreateCoreWebView2Controller(shared->parent,cb);
             cb->Release();return S_OK;
         }
     };
@@ -144,7 +144,7 @@ WebviewHost::~WebviewHost(){stop();}
 bool WebviewHost::start(HWND hwnd,const std::filesystem::path& folder,MessageCallback cb,std::wstring& error){
     stop();
     if(!std::filesystem::is_regular_file(folder/L"index.html")){error=L"GLO UI assets were not found. Please reinstall the app.";return false;}
-    internal_=new Internal;
+    internal_=std::make_shared<Internal>();
     internal_->parent=hwnd;internal_->folder=folder;internal_->callback=std::move(cb);internal_->ready=&ready_;
     internal_->loader=LoadLibraryExW(L"WebView2Loader.dll",nullptr,LOAD_LIBRARY_SEARCH_APPLICATION_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if(!internal_->loader){error=L"WebView2Loader.dll is missing. Please reinstall GLO.";stop();return false;}
@@ -169,4 +169,4 @@ bool WebviewHost::start(HWND hwnd,const std::filesystem::path& folder,MessageCal
 }
 void WebviewHost::resize() const {if(internal_&&internal_->controller){RECT r{};GetClientRect(internal_->parent,&r);internal_->controller->put_Bounds(r);}}
 void WebviewHost::post_json(const std::string& json) const {if(!internal_||!internal_->view)return;const auto wide=from_utf8(json);if(!wide.empty())internal_->view->PostWebMessageAsJson(wide.c_str());}
-void WebviewHost::stop(){ready_=false;if(internal_){internal_->shutdown();delete internal_;internal_=nullptr;}}
+void WebviewHost::stop(){ready_=false;if(internal_){internal_->shutdown();internal_.reset();}}
