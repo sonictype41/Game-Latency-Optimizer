@@ -39,6 +39,26 @@ class Webview2Contract(unittest.TestCase):
         self.assertIn('CoUninitialize()',cpp)
         self.assertIn('shell32 ole32 comdlg32',cmake)
 
+    def test_mingw_webview2_com_iid_link_contract(self):
+        # MSYS2 MinGW GCC 16 can compile WebView2's COM interfaces, but
+        # __uuidof/ IID_PPV_ARGS leave five unresolved __mingw_uuidof symbols
+        # when linking GLO.exe. Use the IID declarations emitted by the SDK.
+        src=(ROOT/'app/frontend/webview_host.cpp').read_text(encoding='utf-8')
+        code='\n'.join(line.split('//')[0] for line in src.splitlines())
+        self.assertNotIn('__uuidof(',code)
+        self.assertNotIn('IID_PPV_ARGS(',code)
+        self.assertNotIn('__mingw_uuidof',code)
+        for iface in (
+            'ICoreWebView2WebMessageReceivedEventHandler',
+            'ICoreWebView2NavigationStartingEventHandler',
+            'ICoreWebView2CreateCoreWebView2ControllerCompletedHandler',
+            'ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler',
+        ):
+            self.assertIn('handler_iid<'+iface+'>()',code)
+            self.assertIn('return IID_'+iface+';',code)
+        self.assertIn('iid==handler_iid<I>()',code)
+        self.assertIn('QueryInterface(IID_ICoreWebView2_3, reinterpret_cast<void**>(&view3))',code)
+
     def test_windows_staging_contains_webview2(self):
         cmake=(ROOT/'CMakeLists.txt').read_text(encoding='utf-8')
         installer=(ROOT/'installer/nsis/GLO.nsi').read_text(encoding='utf-8-sig')

@@ -9,13 +9,29 @@
 #include <utility>
 
 namespace {
+// WebView2's generated SDK header provides these IID constants directly.
+// MinGW does not instantiate __mingw_uuidof<T>() for these COM interfaces,
+// so avoid __uuidof(T) / IID_PPV_ARGS (which expand to that helper).
+template<typename I> const IID& handler_iid();
+template<> const IID& handler_iid<ICoreWebView2WebMessageReceivedEventHandler>() {
+    return IID_ICoreWebView2WebMessageReceivedEventHandler;
+}
+template<> const IID& handler_iid<ICoreWebView2NavigationStartingEventHandler>() {
+    return IID_ICoreWebView2NavigationStartingEventHandler;
+}
+template<> const IID& handler_iid<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>() {
+    return IID_ICoreWebView2CreateCoreWebView2ControllerCompletedHandler;
+}
+template<> const IID& handler_iid<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>() {
+    return IID_ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler;
+}
 template<typename I> class HandlerBase : public I {
     std::atomic<ULONG> refs_{1};
 public:
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
         if(!out) return E_POINTER;
         *out=nullptr;
-        if(iid==IID_IUnknown || iid==__uuidof(I)) { *out=static_cast<I*>(this);AddRef();return S_OK; }
+        if(iid==IID_IUnknown || iid==handler_iid<I>()) { *out=static_cast<I*>(this);AddRef();return S_OK; }
         return E_NOINTERFACE;
     }
     ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
@@ -94,7 +110,7 @@ public:
             if(SUCCEEDED(owner->view->add_NavigationStarting(nav,&owner->nav_token)))owner->nav_registered=true;
             nav->Release();
             ICoreWebView2_3* view3=nullptr;
-            if(SUCCEEDED(owner->view->QueryInterface(IID_PPV_ARGS(&view3)))&&view3){
+            if(SUCCEEDED(owner->view->QueryInterface(IID_ICoreWebView2_3, reinterpret_cast<void**>(&view3)))&&view3){
                 const HRESULT mapping=view3->SetVirtualHostNameToFolderMapping(L"glo.local",owner->folder.c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
                 view3->Release();
                 if(SUCCEEDED(mapping)){
