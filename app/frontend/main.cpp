@@ -1,6 +1,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <objbase.h>
 #include <commdlg.h>
 #include <shellapi.h>
 #include <winhttp.h>
@@ -1054,7 +1055,7 @@ void on_web_action(const std::wstring& raw) {
     else if(*action=="open.time")open_external_link(g_ui->window,L"https://gloptimizer.com/time/",L"GLO Time Bank");
     else if(*action=="open.external"){
         const auto url=json_string_field(data,"url");
-        if(url&&(*url=="https://gloptimizer.com"||*url=="https://github.com/sonictype41/Game-Latency-Optimizer"||*url=="https://www.facebook.com/an.nguyen.671146/"))open_external_link(g_ui->window,widen(*url),L"External Link");
+        if(url&&(*url=="https://gloptimizer.com"||*url=="https://github.com/sonictype41/Game-Latency-Optimizer"||*url=="https://www.facebook.com/an.nguyen.671146/"))open_external_link(g_ui->window,widen(*url).c_str(),L"External Link");
     }else if(*action=="services.connect"){
         if(connection_active())return;
         const auto game=json_string_field(data,"game"),region=json_string_field(data,"region");

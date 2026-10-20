@@ -24,6 +24,21 @@ class Webview2Contract(unittest.TestCase):
         for symbol in ('WM_GLO_INCOMING_URI','run_handoff_task','measure_relay_candidates','connect_loaded','glo://open','custom.confirm','auth.redeem','services.connect'):
             self.assertIn(symbol,cpp)
         self.assertTrue((ROOT/'app/core/src/wintun_tunnel.cpp').exists())
+    def test_mingw_compile_regressions_for_native_booster(self):
+        # Prevent the GCC 16 collision with std::quoted and the Win32 type/
+        # COM header errors that previously broke the first v0.1.0-beta build.
+        api=(ROOT/'app/frontend/official_api.cpp').read_text(encoding='utf-8')
+        cpp=(ROOT/'app/frontend/main.cpp').read_text(encoding='utf-8')
+        cmake=(ROOT/'CMakeLists.txt').read_text(encoding='utf-8')
+        self.assertIn('std::string json_quote(',api)
+        self.assertNotIn('quoted(',api)
+        self.assertEqual(api.count('json_quote('),8)
+        self.assertIn('open_external_link(g_ui->window,widen(*url).c_str()',cpp)
+        self.assertIn('#include <objbase.h>',cpp)
+        self.assertIn('CoInitializeEx(',cpp)
+        self.assertIn('CoUninitialize()',cpp)
+        self.assertIn('shell32 ole32 comdlg32',cmake)
+
     def test_windows_staging_contains_webview2(self):
         cmake=(ROOT/'CMakeLists.txt').read_text(encoding='utf-8')
         installer=(ROOT/'installer/nsis/GLO.nsi').read_text(encoding='utf-8-sig')

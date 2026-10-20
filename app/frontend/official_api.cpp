@@ -20,7 +20,7 @@ std::string get_string(const std::string& data,const std::string& name){
     for(++p;p<data.size();++p){char c=data[p];if(c=='"')return out;if(c=='\\'){if(++p>=data.size())break;c=data[p];if(c=='n'||c=='r')c=' ';else if(c=='t')c=' ';}out+=c;if(out.size()>8192)break;}
     return {};
 }
-std::string quoted(const std::string& text){std::string q="\"";for(unsigned char ch:text){if(ch=='"'||ch=='\\'){q+='\\';q+=char(ch);}else if(ch>=32&&ch<127)q+=char(ch);else if(ch>=128)q+=char(ch);}return q+'"';}
+std::string json_quote(const std::string& text){std::string q="\"";for(unsigned char ch:text){if(ch=='"'||ch=='\\'){q+='\\';q+=char(ch);}else if(ch>=32&&ch<127)q+=char(ch);else if(ch>=128)q+=char(ch);}return q+'"';}
 std::string extract(const std::string& s,const std::string& key,char open,char close){
     size_t p=s.find('"'+key+'"');if(p==std::string::npos)return {};
     p=s.find(':',p+key.size()+2);if(p==std::string::npos)return {};
@@ -79,7 +79,7 @@ bool OfficialApi::request(const wchar_t* method,const wchar_t* path,const std::s
     WinHttpCloseHandle(req);WinHttpCloseHandle(connection);WinHttpCloseHandle(session);return !!ok;
 }
 bool OfficialApi::renew(){if(refresh_.empty())return false;std::string reply;unsigned long code=0;
-    if(!request(L"POST",L"/app/auth/refresh","{\"refresh_token\":"+quoted(refresh_)+"}",reply,code,false)||code!=200){refresh_.clear();access_.clear();store_refresh();send("{\"type\":\"auth\",\"logged\":false}");return false;}
+    if(!request(L"POST",L"/app/auth/refresh","{\"refresh_token\":"+json_quote(refresh_)+"}",reply,code,false)||code!=200){refresh_.clear();access_.clear();store_refresh();send("{\"type\":\"auth\",\"logged\":false}");return false;}
     auto access=get_string(reply,"access_token"),refresh=get_string(reply,"refresh_token");
     if(access.empty()||refresh.empty())return false;access_=access;refresh_=refresh;store_refresh();return true;
 }
@@ -92,7 +92,7 @@ bool OfficialApi::authorized(const wchar_t* method,const wchar_t* path,const std
 void OfficialApi::fetch_details(){std::string reply;unsigned long status=0;
     if(!authorized(L"GET",L"/app/me","",reply,status)||status!=200){send("{\"type\":\"auth\",\"logged\":false}");return;}
     const auto email=get_string(reply,"email");
-    send("{\"type\":\"auth\",\"logged\":true,\"email\":"+quoted(email)+"}");
+    send("{\"type\":\"auth\",\"logged\":true,\"email\":"+json_quote(email)+"}");
     auto balance=extract(reply,"balance",'{','}');if(!balance.empty())send("{\"type\":\"wallet\",\"wallet\":"+balance+"}");
     if(authorized(L"GET",L"/app/booster/catalog","",reply,status)&&status==200){
         auto games=extract(reply,"games",'[',']');auto regions=extract(reply,"regions",'[',']');
@@ -101,23 +101,23 @@ void OfficialApi::fetch_details(){std::string reply;unsigned long status=0;
 }
 void OfficialApi::restore(){async([this](){load_refresh();if(!refresh_.empty())fetch_details();else send("{\"type\":\"auth\",\"logged\":false}");});}
 void OfficialApi::redeem(std::string code){async([this,code=std::move(code)](){std::string reply;unsigned long status=0;
-    if(!request(L"POST",L"/app/auth/redeem","{\"code\":"+quoted(code)+"}",reply,status,false)||status!=200){send("{\"type\":\"error\",\"message\":\"Mã đăng nhập không hợp lệ hoặc đã hết hạn.\"}");return;}
+    if(!request(L"POST",L"/app/auth/redeem","{\"code\":"+json_quote(code)+"}",reply,status,false)||status!=200){send("{\"type\":\"error\",\"message\":\"Mã đăng nhập không hợp lệ hoặc đã hết hạn.\"}");return;}
     auto a=get_string(reply,"access_token"),r=get_string(reply,"refresh_token");if(a.empty()||r.empty()){send("{\"type\":\"error\",\"message\":\"Backend trả về phiên không hợp lệ.\"}");return;}
     access_=std::move(a);refresh_=std::move(r);store_refresh();fetch_details();send("{\"type\":\"toast\",\"message\":\"Đăng nhập thành công.\"}");
 });}
 void OfficialApi::refresh_wallet(){async([this](){fetch_details();});}
 void OfficialApi::prepare(std::string game,std::string region){async([this,game=std::move(game),region=std::move(region)](){
     std::string reply;unsigned long status=0;
-    if(!authorized(L"POST",L"/app/session/prepare","{\"game\":"+quoted(game)+",\"region\":"+quoted(region)+"}",reply,status)){
+    if(!authorized(L"POST",L"/app/session/prepare","{\"game\":"+json_quote(game)+",\"region\":"+json_quote(region)+"}",reply,status)){
         send("{\"type\":\"error\",\"message\":\"Không thể liên lạc với GLO API.\"}");return;}
     if(status==409 && (reply.find("BALANCE_EMPTY")!=std::string::npos || reply.find("BALANCE")!=std::string::npos)){
         send("{\"type\":\"need-time\"}");return;}
     if(status!=200){send("{\"type\":\"error\",\"message\":\"Không thể tạo phiên. Kiểm tra trò chơi, region hoặc số dư.\"}");return;}
     std::string token=get_string(reply,"handoff_token");
     if(token.empty()){send("{\"type\":\"error\",\"message\":\"Thiếu handoff token.\"}");return;}
-    send("{\"type\":\"prepared\",\"token\":"+quoted(token)+"}");
+    send("{\"type\":\"prepared\",\"token\":"+json_quote(token)+"}");
 });}
 void OfficialApi::logout(){async([this](){std::string reply;unsigned long code=0;
-    if(!access_.empty())request(L"POST",L"/app/auth/logout","{\"refresh_token\":"+quoted(refresh_)+"}",reply,code,true);
+    if(!access_.empty())request(L"POST",L"/app/auth/logout","{\"refresh_token\":"+json_quote(refresh_)+"}",reply,code,true);
     access_.clear();refresh_.clear();store_refresh();send("{\"type\":\"auth\",\"logged\":false}");
 });}
