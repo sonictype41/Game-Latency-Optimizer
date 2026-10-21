@@ -1,5 +1,22 @@
 # Changelog — public OSS releases only
 
+## [0.1.3-beta] - 2026-10-21
+### Added
+- Added local PUBG: BATTLEGROUNDS game-card artwork, hover/focus caption behavior and a unified Connection Dashboard for Official Services and custom URI sessions.
+- Display the selected game's supported artwork, or a neutral Custom Game placeholder if a game lacks packaged artwork. Unrecognized routing profiles remain subject to the native safety policy and are not granted arbitrary UDP access.
+- Added a custom provider IP/port visibility toggle with a masked display when hidden; Official Services continues to display relay node names.
+- Display the five-minute relay quality graph for both Official and Custom connections only when valid gameplay RELAY telemetry is present and the graph setting is enabled.
+- Added a native anti-overlap guard for Official prepare, custom URI inspection, Windows deep links, provider confirmation, connection and disconnection, with contextual warnings referencing the current game and Services/Connect mode.
+### Fixed
+- Prevent initiating a second handoff while a Services session, custom session, or pending provider confirmation is active; preserve the original session source.
+- Correct Custom Connect node masking and graph display without duplicating the dashboard.
+### Changed
+- Refined the GitHub SVG icon, reduced the default window height, and only reveal game-card details and Connect buttons on hover or keyboard focus (also accessible on non-hover devices).
+- Preserved existing Wintun routing, gameplay-only traffic policy, session admission, official identity and custom URI confirmation.
+### Known limitations
+- New unsupported game identifiers cannot be routed safely without a compatible native gameplay profile; a placeholder is a presentation fallback, not an implicit authorization for unrestricted tunneling.
+- Windows MinGW build and gameplay/relay behavior require GitHub Actions and on-device verification.
+
 ## [0.1.2-beta] - 2026-10-20
 ### Added
 - Separate titlebar Minimize from close-to-tray. By default, Minimize keeps the WebView2 UI alive; close-to-tray preserves the current optional UI memory release behavior.

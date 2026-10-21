@@ -59,7 +59,7 @@ constexpr UINT kTrayOpenId = 41001;
 constexpr UINT kTrayDisconnectId = 41002;
 constexpr UINT kTrayQuitId = 41003;
 constexpr int kClientWidth = 1080;
-constexpr int kClientHeight = 830;
+constexpr int kClientHeight = 720;
 constexpr wchar_t kMainWindowClass[] = L"GLOGenericClient";
 #define GLO_WIDEN_IMPL(x) L##x
 #define GLO_WIDEN(x) GLO_WIDEN_IMPL(x)
@@ -100,7 +100,7 @@ struct UiState {
     std::unique_ptr<OfficialApi> official_api;
     bool web_mode{false}, official_session{false}, was_session{false};
     bool optimize_memory_on_tray{true}, optimize_on_minimize{false}, show_network_quality_graph{true};
-    bool api_restored{false}, ui_ready{false};
+    bool api_restored{false}, ui_ready{false}, official_preparing{false};
     std::wstring deferred_handoff_uri;
     std::string last_ui_mode{"services"}, last_ui_game{"valorant"}, last_ui_region{"SG"};
     struct QualityPoint { ULONGLONG tick; double ping; double loss; };
@@ -190,7 +190,7 @@ void web_connection_snapshot(){
     if(g_ui->config){
         if(g_ui->official_session)node=g_ui->config->relay_name;
         else if(g_ui->relay_endpoint_visible)node=g_ui->config->relay_host+":"+std::to_string(g_ui->config->relay_port);
-        else node="Protected";
+        else node="**:**:**:**:****";
     }
     const unsigned rem=snap.session_remaining_seconds;
     char left[32]{};std::snprintf(left,sizeof(left),"%02u:%02u:%02u",rem/3600,(rem%3600)/60,rem%60);
@@ -198,7 +198,7 @@ void web_connection_snapshot(){
     out+="\"active\":"+std::string(active?"true":"false")+",\"source\":\""+(g_ui->official_session?std::string("official"):std::string("custom"))+"\",";
     out+="\"phase\":\""+phase+"\",\"route\":\""+route+"\",";
     out+="\"ping_ms\":"+(no_stats?"null":number(snap.gameplay_ping_ms))+",\"loss_pct\":"+(no_stats?"null":number(snap.gameplay_loss_pct))+",";
-    out+="\"left\":\""+std::string(left)+"\",\"node\":\""+json_escape(node)+"\",\"message\":\""+json_escape(snap.message)+"\"},\"waiting\":"+(g_ui->handoff_task?"true":"false")+",\"history\":"+graph_history_json()+"}";
+    out+="\"left\":\""+std::string(left)+"\",\"node\":\""+json_escape(node)+"\",\"message\":\""+json_escape(snap.message)+"\",\"game\":\""+json_escape(g_ui->config?std::string(glo::game_profile(g_ui->config->game_id).key):g_ui->last_ui_game)+"\",\"region\":\""+json_escape(g_ui->last_ui_region)+"\",\"node_visible\":"+(g_ui->relay_endpoint_visible?"true":"false")+"},\"waiting\":"+(g_ui->handoff_task?"true":"false")+",\"history\":"+graph_history_json()+"}";
     web_emit(out);
     if(g_ui->was_session&&!active&&snap.error&&snap.error->code==glo::ClientErrorCode::SessionExpired)web_emit("{\"type\":\"expired\"}");
     g_ui->was_session=active;
@@ -752,7 +752,7 @@ void run_handoff_task(std::shared_ptr<HandoffTask> task,std::wstring uri,HWND hw
 
 void cancel_handoff(){
     if(g_ui->handoff_task)g_ui->handoff_task->cancelled.store(true);
-    g_ui->handoff_task.reset();g_ui->modal=InAppModal::None;
+    g_ui->handoff_task.reset();g_ui->pending_handoff_uri.clear();g_ui->modal=InAppModal::None;
     InvalidateRect(g_ui->window,nullptr,FALSE);
 }
 
@@ -769,9 +769,21 @@ void perform_handoff_connect(const std::wstring& uri){
     start_handoff_task(uri,true);
 }
 
+void show_overlap_guard(){
+    if(!g_ui)return;
+    const std::string game=g_ui->config?std::string(glo::game_profile(g_ui->config->game_id).display_name):g_ui->last_ui_game;
+    const std::string where=g_ui->official_session?"services":"connect";
+    if(g_ui->web_mode){web_emit("{\"type\":\"overlap\",\"game\":\""+json_escape(game)+"\",\"where\":\""+where+"\"}");}
+    else MessageBoxW(g_ui->window,L"An existing GLO connection is active. Disconnect it first.",L"GLO - Connection already active",MB_OK|MB_ICONWARNING);
+}
+bool another_connection_busy(){
+    if(!g_ui)return false;
+    const auto snap=g_ui->client.snapshot();
+    return g_ui->official_preparing||g_ui->handoff_task||!g_ui->pending_handoff_uri.empty()||g_ui->disconnecting.load()||snap.phase!=glo::UiPhase::Disconnected||snap.state==glo::ConnectionState::Connecting;
+}
 void handle_handoff_uri(const std::wstring& uri){
     if(uri==L"glo://open"||uri==L"glo://open/"){ShowWindow(g_ui->window,SW_RESTORE);SetForegroundWindow(g_ui->window);return;}
-    g_ui->official_session=false;
+    if(another_connection_busy()){show_overlap_guard();return;}
     // External URI always returns to Main before starting an in-app modal.
     if(g_ui->page!=UiPage::Main){g_ui->page=UiPage::Main;InvalidateRect(g_ui->window,nullptr,FALSE);}
     const auto safe=handoff_uri_safe_summary(uri);
@@ -787,6 +799,7 @@ void handle_handoff_uri(const std::wstring& uri){
         return;
     }
     g_ui->app_log.info("URI004","event=handoff_parse_ok token_present=true token_length="+std::to_string(parsed.link->token.size()));
+    g_ui->official_session=false;
     g_ui->pending_handoff_uri=uri;
     start_handoff_task(uri,false);
 }
@@ -801,6 +814,7 @@ void finish_handoff_task(HWND hwnd){
     g_ui->handoff_task.reset();g_ui->modal=InAppModal::None;
     InvalidateRect(hwnd,nullptr,FALSE);
     if(!error.empty()){
+        g_ui->pending_handoff_uri.clear();
         if(g_ui->web_mode){web_emit("{\"type\":\"error\",\"message\":\"Could not complete provider handoff.\"}");web_connection_snapshot();return;}
         g_ui->app_log.warn("URI005",connecting?"event=handoff_connect_failed":"event=handoff_inspect_failed");
         MessageBoxW(hwnd,error.c_str(),L"GLO - Handoff",MB_OK|MB_ICONERROR);return;
@@ -1124,9 +1138,9 @@ void on_web_action(const std::wstring& raw) {
         const auto url=json_string_field(data,"url");
         if(url&&(*url=="https://gloptimizer.com"||*url=="https://github.com/sonictype41/Game-Latency-Optimizer"||*url=="https://www.facebook.com/an.nguyen.671146/"))open_external_link(g_ui->window,widen(*url).c_str(),L"External Link");
     }else if(*action=="services.connect"){
-        if(connection_active())return;
+        if(another_connection_busy()){show_overlap_guard();return;}
         const auto game=json_string_field(data,"game"),region=json_string_field(data,"region");
-        if(game&&region&&(*game=="roblox"||*game=="valorant"||*game=="pubg")&&region->size()<=8){g_ui->official_session=true;g_ui->official_api->prepare(*game,*region);}
+        if(game&&region&&(*game=="roblox"||*game=="valorant"||*game=="pubg")&&region->size()<=8){g_ui->official_session=true;g_ui->last_ui_game=*game;g_ui->last_ui_region=*region;g_ui->official_preparing=true;g_ui->official_api->prepare(*game,*region);}
     }else if(*action=="custom.inspect"){
         auto uri=json_string_field(data,"uri");if(uri&&uri->size()<4096)handle_handoff_uri(widen(*uri));
     }else if(*action=="custom.paste"){
@@ -1135,8 +1149,11 @@ void on_web_action(const std::wstring& raw) {
         g_ui->pending_handoff_uri.clear();
     }else if(*action=="custom.confirm"){
         if(!g_ui->pending_handoff_uri.empty()){
+            if(g_ui->official_preparing||connection_active()||g_ui->disconnecting.load()){show_overlap_guard();return;}
             std::wstring uri=g_ui->pending_handoff_uri;g_ui->pending_handoff_uri.clear();perform_handoff_connect(uri);
         }
+    }else if(*action=="custom.toggleIp"){
+        if(g_ui->config&&!g_ui->official_session){g_ui->relay_endpoint_visible=!g_ui->relay_endpoint_visible;web_connection_snapshot();}
     }else if(*action=="disconnect"){
         if(connection_active())begin_disconnect(g_ui->window);
     }else if(*action=="settings.theme"){
@@ -1181,14 +1198,15 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
         if(!payload)return 0;
         const auto type=json_string_field(*payload,"type");
         if(type&&*type=="prepared"){
+            g_ui->official_preparing=false;
             const auto token=json_string_field(*payload,"token");
-            if(token&&!connection_active()){
+            if(token&&!connection_active()&&!g_ui->handoff_task&&g_ui->pending_handoff_uri.empty()){
                 // The Official API supplies a one-time handoff token. The existing
                 // relay RTT/probe/redeem pipeline remains unchanged.
                 const auto uri=L"glo://connect/?v=1&issuer=https%3A%2F%2Fgloptimizer.com&endpoint=https%3A%2F%2Fapi.gloptimizer.com&token="+widen(*token);
                 perform_handoff_connect(uri);
             }else web_emit("{\"type\":\"error\",\"message\":\"Cannot start another connection.\"}");
-        }else if(g_ui->web_mode)g_ui->webview.post_json(*payload);
+        }else {if(type&&(*type=="error"||*type=="need-time"))g_ui->official_preparing=false;if(g_ui->web_mode)g_ui->webview.post_json(*payload);}
         return 0;
     }
     case WM_GETMINMAXINFO: {
@@ -1217,7 +1235,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
     case WM_GLO_INCOMING_URI:{std::unique_ptr<std::wstring> uri(reinterpret_cast<std::wstring*>(lp));
         if(!uri)return 0;show_main_window(hwnd);
         if(!g_ui->ui_ready && *uri!=L"glo://open" && *uri!=L"glo://open/")g_ui->deferred_handoff_uri=*uri;
-        else {if(*uri!=L"glo://open"&&*uri!=L"glo://open/")web_emit("{\"type\":\"mode\",\"mode\":\"connect\"}");handle_handoff_uri(*uri);}
+        else {if(*uri!=L"glo://open"&&*uri!=L"glo://open/"&&!another_connection_busy())web_emit("{\"type\":\"mode\",\"mode\":\"connect\"}");handle_handoff_uri(*uri);}
         return 0;}
     case WM_TIMER:if(wp==42){const auto snap=g_ui->client.snapshot();bool repaint=snap.state==glo::ConnectionState::Connecting||g_ui->disconnecting.load()||g_ui->modal==InAppModal::HandoffBusy;if(g_ui->action_feedback!=ActionFeedback::None){if(GetTickCount64()>=g_ui->action_feedback_until_ms){g_ui->action_feedback=ActionFeedback::None;g_ui->action_feedback_until_ms=0;}repaint=true;}if(repaint)InvalidateRect(hwnd,nullptr,FALSE);update_tray_icon();check_session_warnings(snap);if(GetTickCount64()/1000!=g_ui->last_web_second){
             g_ui->last_web_second=GetTickCount64()/1000;
