@@ -115,36 +115,32 @@ jobs:
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-python
+            mingw-w64-x86_64-nsis
             make
 
-      - name: Install and verify NSIS (native Windows path)
-        shell: pwsh
+      - name: Verify NSIS compiler (MSYS2 MINGW64)
         run: |
-          $ErrorActionPreference = "Stop"
-          choco install nsis -y --no-progress
-          if ($LASTEXITCODE -ne 0) { throw "Chocolatey NSIS installation failed ($LASTEXITCODE)" }
-
-          # Chocolatey and MSYS2 can expose different PATH values. Resolve the
-          # actual native executable here and pass it explicitly to MSYS2.
-          $candidates = @()
-          $command = Get-Command makensis.exe -ErrorAction SilentlyContinue
-          if ($command) { $candidates += $command.Source }
-          if (${env:ProgramFiles(x86)}) { $candidates += (Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe") }
-          if ($env:ProgramFiles) { $candidates += (Join-Path $env:ProgramFiles "NSIS\makensis.exe") }
-          if ($env:ChocolateyInstall) {
-            $candidates += (Join-Path $env:ChocolateyInstall "bin\makensis.exe")
-            $candidates += (Join-Path $env:ChocolateyInstall "lib\nsis\tools\makensis.exe")
-            $chocoPkg = Join-Path $env:ChocolateyInstall "lib\nsis"
-            if (Test-Path $chocoPkg) {
-              $candidates += @(Get-ChildItem $chocoPkg -Filter makensis.exe -File -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
-            }
-          }
-          $exe = $candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
-          if (-not $exe) { throw "NSIS was installed, but makensis.exe could not be located" }
-          & $exe /VERSION
-          if ($LASTEXITCODE -ne 0) { throw "makensis.exe verification failed ($LASTEXITCODE): $exe" }
-          "GLO_MAKENSIS=$exe" >> $env:GITHUB_ENV
-          Write-Host "Verified NSIS compiler: $exe"
+          set -euo pipefail
+          # NSIS comes from MSYS2 (the same package manager as the C++ toolchain).
+          # Do not call Chocolatey's remote V2 feed: its intermittent 504s must
+          # not block a build that has already compiled successfully.
+          exe="$(command -v makensis.exe || true)"
+          if [[ -z "$exe" || ! -f "$exe" ]]; then
+            echo "MSYS2 NSIS compiler missing: install mingw-w64-x86_64-nsis" >&2
+            exit 1
+          fi
+          # Disable MSYS2 slash-argument conversion for this native Windows EXE.
+          version="$(MSYS_NO_PATHCONV=1 "$exe" /VERSION)"
+          if [[ -z "$version" ]]; then
+            echo "makensis.exe did not return a version" >&2
+            exit 1
+          fi
+          # Python running in MINGW64 is a native Windows executable: pass an
+          # absolute Windows path, not /mingw64/bin/makensis.exe.
+          native_exe="$(cygpath -w "$exe")"
+          [[ -n "$native_exe" ]] || { echo "NSIS path conversion failed" >&2; exit 1; }
+          echo "GLO_MAKENSIS=$native_exe" >> "$GITHUB_ENV"
+          printf 'Verified NSIS compiler: %s (%s)\n' "$native_exe" "$version"
 
       - name: Fetch pinned Wintun
         run: python ./tools/fetch_wintun.py

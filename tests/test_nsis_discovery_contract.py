@@ -1,7 +1,7 @@
-"""Regression checks for Chocolatey (PowerShell) -> MSYS2 NSIS discovery.
+"""Regression checks for reliable MSYS2 NSIS installer discovery.
 
-The Windows release must not depend on Chocolatey's PATH surviving the shell
-boundary. Test the finder, fail-fast behavior, and release workflow handoff.
+The Windows release must not depend on the Chocolatey V2 feed or on ambiguous
+PATH differences. Test explicit native-path handoff and failure behavior.
 """
 import importlib.util
 import json
@@ -101,15 +101,36 @@ class NSISDiscoveryContractTests(unittest.TestCase):
 
     def test_release_workflow_preflights_nsis_and_passes_native_path(self):
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-        self.assertIn("choco install nsis -y --no-progress", workflow)
-        self.assertIn("Get-Command makensis.exe", workflow)
-        self.assertIn("$LASTEXITCODE -ne 0", workflow)
-        self.assertIn('"GLO_MAKENSIS=$exe" >> $env:GITHUB_ENV', workflow)
+        # Use MSYS2, not Chocolatey's V2 API which can return a transient 504.
+        self.assertIn("mingw-w64-x86_64-nsis", workflow)
+        self.assertNotIn("choco install", workflow)
+        self.assertIn("command -v makensis.exe", workflow)
+        self.assertIn('MSYS_NO_PATHCONV=1 "$exe" /VERSION', workflow)
+        self.assertIn('native_exe="$(cygpath -w "$exe")"', workflow)
+        self.assertIn('echo "GLO_MAKENSIS=$native_exe" >> "$GITHUB_ENV"', workflow)
         self.assertIn('--makensis "$GLO_MAKENSIS"', workflow)
-        self.assertLess(workflow.index("Install and verify NSIS"), workflow.index("Build Windows installer"))
+        self.assertLess(workflow.index("Verify NSIS compiler"), workflow.index("Build Windows installer"))
         for name in ("windows-app.yml", "release.yml"):
             text = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
             self.assertIn("tests.test_nsis_discovery_contract", text)
+
+    def test_msys2_nsis_is_in_release_windows_job_package_list(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML unavailable")
+        workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+        windows = workflow["jobs"]["windows"]
+        steps = windows["steps"]
+        setup = next(step for step in steps if step.get("uses", "").startswith("msys2/setup-msys2@"))
+        self.assertIn("mingw-w64-x86_64-nsis", setup["with"]["install"].split())
+        self.assertIn("mingw-w64-x86_64-gcc", setup["with"]["install"].split())
+        verify_pos = next(i for i, step in enumerate(steps) if step.get("name", "").startswith("Verify NSIS compiler"))
+        builder_pos = next(i for i, step in enumerate(steps) if step.get("name", "") == "Build Windows installer")
+        self.assertLess(verify_pos, builder_pos)
+        preflight = steps[verify_pos]
+        self.assertNotIn("shell", preflight)  # inherits the MSYS2 shell
+        self.assertIn('exit 1', preflight["run"])
 
 
 if __name__ == "__main__":

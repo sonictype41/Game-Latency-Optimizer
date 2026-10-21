@@ -22,3 +22,14 @@
 .startup-loading strong{font-size:20px}.startup-loading p{margin:9px 0 0;color:var(--muted);font-size:13px}
 .auth-offline{width:min(100%,790px);margin:20px auto;padding:24px;text-align:center}.auth-offline p{color:var(--muted)}
 @media(max-width:760px){.connected-game{min-height:0}.nested-setting{margin-left:8px;padding-left:10px}}
+
+/* OSS 0.1.3: compact idle cards, shared dashboard and privacy control. */
+.game-caption{opacity:0;transform:translateY(19px);transition:opacity .2s ease,transform .2s ease}
+.game-card:hover .game-caption,.game-card:focus .game-caption,.game-card:focus-within .game-caption,.game-card.is-connecting .game-caption{opacity:1;transform:translateY(0)}
+.game-shade{opacity:.3;transition:opacity .2s ease}.game-card:hover .game-shade,.game-card:focus-within .game-shade,.game-card.is-connecting .game-shade{opacity:1}
+@media(hover:none){.game-caption{opacity:1;transform:none}.game-shade{opacity:1}}
+.node-heading{display:flex;align-items:center;justify-content:space-between;gap:6px}.node-heading small{margin-bottom:0}
+.node-eye{color:var(--muted);background:transparent;border-radius:7px;padding:1px;display:inline-grid;place-items:center}.node-eye:hover{color:var(--accent-text);background:var(--raised)}.node-eye .icon{width:16px;height:16px}
+.node-stat strong{word-break:break-all}.connected-game img{height:260px}.connected-layout{gap:18px}#custom-connect-form.hidden{display:none}
+
+.placeholder-image{object-fit:contain!important;background:var(--raised);padding:22px}
