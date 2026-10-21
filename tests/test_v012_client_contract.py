@@ -1,13 +1,13 @@
-"""OSS v0.1.3-beta: UI state and native lifecycle regression checks."""
+"""OSS v0.1.2-beta: UI state and native lifecycle regression checks."""
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 
 def read(name): return (ROOT/name).read_text(encoding='utf-8')
 
 def test_versions_and_release_changelog():
-    assert read('VERSION').strip()=='0.1.3'
-    assert read('RELEASE').strip()=='0.1.3-beta'
-    assert '## [0.1.3-beta]' in read('CHANGELOG.md')
+    assert read('VERSION').strip()=='0.1.2'
+    assert read('RELEASE').strip()=='0.1.2-beta'
+    assert '## [0.1.2-beta]' in read('CHANGELOG.md')
 
 def test_native_minimize_separate_from_tray():
     native=read('app/frontend/main.cpp')

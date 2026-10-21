@@ -28,9 +28,9 @@ def default_bin_root():
 def find_makensis(explicit: str | None):
     """Find an existing NSIS compiler without downloading or installing anything.
 
-    GitHub Actions installs NSIS through MSYS2 together with the C++ toolchain.
-    Its preflight exports the verified native Windows executable as GLO_MAKENSIS.
-    Other installed copies (including Chocolatey) remain supported for local use.
+    GitHub's Chocolatey install executes in PowerShell, while the next step runs
+    under MSYS2; their PATH values are not guaranteed to be the same. The release
+    workflow exports the verified native Windows executable as GLO_MAKENSIS.
     """
     requested = explicit or os.environ.get("GLO_MAKENSIS", "").strip()
     if requested:
@@ -61,8 +61,8 @@ def find_makensis(explicit: str | None):
     raise FileNotFoundError(
         "makensis.exe was not found. Install NSIS and set GLO_MAKENSIS "
         "or pass --makensis with its complete executable path. "
-        "GitHub Actions should install mingw-w64-x86_64-nsis with MSYS2 "
-        "and export its native executable path before building the installer."
+        "GitHub Actions must verify Chocolatey's installed NSIS location "
+        "before entering the MSYS2 build step."
     )
 
 

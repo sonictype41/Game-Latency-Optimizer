@@ -62,7 +62,7 @@ void OfficialApi::load_refresh(){auto path=token_file();if(path.empty())return;s
 }
 bool OfficialApi::request(const wchar_t* method,const wchar_t* path,const std::string& body,std::string& reply,unsigned long& code,bool auth){
     reply.clear();code=0;
-    HINTERNET session=WinHttpOpen(L"GLO/0.1.3-beta",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
+    HINTERNET session=WinHttpOpen(L"GLO/0.1.2-beta",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
     if(!session)return false;
     WinHttpSetTimeouts(session,5000,5000,5000,8000);
     HINTERNET connection=WinHttpConnect(session,L"api.gloptimizer.com",INTERNET_DEFAULT_HTTPS_PORT,0);
