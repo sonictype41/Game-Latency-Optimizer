@@ -19,6 +19,15 @@ int main(){
   pg.replace(pg.find("128.116.97.33/32"),std::string("128.116.97.33/32").size(),"20.212.0.0/16,57.155.0.0/16");
   assert(glo::parse_session_config_json(pg,c,e));
   assert(c.game_id==glo::GameId::PUBG && c.gameplay_ipv4=="20.212.0.0/16,57.155.0.0/16");
+  // TFT is enabled for unpublished provider TEST sessions, using only provider-supplied rules.
+  auto tg=good;
+  tg.replace(tg.find("\"game\":\"roblox\""),std::string("\"game\":\"roblox\"").size(),"\"game\":\"tft\"");
+  tg.replace(tg.find("128.116.97.33/32"),std::string("128.116.97.33/32").size(),"151.106.248.19/32");
+  tg.replace(tg.find("\"schema\":2"),std::string("\"schema\":2").size(),"\"schema\":3");
+  tg.insert(tg.size()-1,",\"udp_port_rules\":\"7000-8000\"");
+  assert(glo::parse_session_config_json(tg,c,e));
+  assert(c.game_id==glo::GameId::TFT && c.gameplay_ipv4=="151.106.248.19/32");
+  assert(glo::udp_port_allowed(c.port_rules,7054) && glo::udp_port_allowed(c.port_rules,7323) && glo::udp_port_allowed(c.port_rules,7472));
   // The parser is still strict for unsupported games.
   vg.replace(vg.find("\"game\":\"valorant\""),std::string("\"game\":\"valorant\"").size(),"\"game\":\"not-supported\"");
   assert(!glo::parse_session_config_json(vg,c,e));

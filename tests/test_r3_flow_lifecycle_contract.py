@@ -7,8 +7,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class R3FlowLifecycleContract(unittest.TestCase):
     def test_versions_and_protocol_remain_compatible(self):
         self.assertEqual((ROOT/'VERSION').read_text(encoding="utf-8").strip(), '0.1.3')
-        self.assertEqual((ROOT/'RELEASE').read_text(encoding="utf-8").strip(), '0.1.3-beta')
-        self.assertEqual((ROOT/'DISPLAY_VERSION').read_text(encoding="utf-8").strip(), '0.1.3-beta')
+        self.assertEqual((ROOT/'RELEASE').read_text(encoding="utf-8").strip(), '0.1.3-r1-beta')
+        self.assertEqual((ROOT/'DISPLAY_VERSION').read_text(encoding="utf-8").strip(), '0.1.3-r1-beta')
 
     def test_local_idle_reclamation_is_two_way_and_consistent(self):
         src = (ROOT/'app/core/src/wintun_tunnel.cpp').read_text(encoding="utf-8")

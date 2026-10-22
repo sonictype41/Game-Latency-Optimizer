@@ -26,7 +26,7 @@ namespace glo {
 
 GameDetector::GameDetector(GameId game_id) : game_id_(game_id) {
     if (game_id_ == GameId::Roblox) roblox_ = std::make_unique<RobloxDetector>();
-    if (game_id_ == GameId::Valorant || game_id_ == GameId::PUBG) valorant_ = true;
+    if (game_id_ == GameId::Valorant || game_id_ == GameId::PUBG || game_id_ == GameId::TFT) dedicated_game_ = true;
 }
 
 GameDetector::~GameDetector() = default;
@@ -34,11 +34,15 @@ GameDetector::~GameDetector() = default;
 GameState GameDetector::poll() {
     GameState out;
     out.game_id = game_id_;
-    if (valorant_) {
+    if (dedicated_game_) {
         const bool pubg=game_id_==GameId::PUBG;
-        out.primary_pid = named_process_pid(pubg ? L"TslGame.exe" : L"VALORANT-Win64-Shipping.exe");
+        const bool tft=game_id_==GameId::TFT;
+        // TFT Unreal gameplay executable (not the League/Riot launcher).
+        const wchar_t* executable=tft ? L"TFTClient-Win64-Shipping.exe" :
+            (pubg ? L"TslGame.exe" : L"VALORANT-Win64-Shipping.exe");
+        out.primary_pid = named_process_pid(executable);
         out.process_running = out.primary_pid != 0;
-        const std::string name=pubg ? "PUBG" : "VALORANT";
+        const std::string name=tft ? "TFT" : (pubg ? "PUBG" : "VALORANT");
         out.detail = out.process_running ? name+" PID "+std::to_string(out.primary_pid) : name+" not running";
         return out;
     }

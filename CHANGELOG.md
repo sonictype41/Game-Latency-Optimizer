@@ -1,5 +1,22 @@
 # Changelog — public OSS releases only
 
+## [0.1.3-r1-beta] - 2026-10-22
+
+### Fixed
+- Synchronize WebView2 connection lifecycle after failed Custom Connect handoffs or invalid session configs; errors now reach the dashboard and unblock retry without restarting GLO.
+- Keep Custom Connect verification progress separate from Official Services game-card states, preventing unrelated Roblox/VALORANT/PUBG cards from being marked as connecting.
+- Guard against stale Services connection-timeout callbacks resetting a newer attempt.
+- Reset pending UI state on errors, expiry, insufficient time and connection termination.
+
+### Added
+- Enable hidden TFT TEST/Custom Connect support without changing the Official Services catalog.
+
+### Experimental (not published)
+- Recognize `tft` (Teamfight Tactics) in the session-config parser, native Game Registry and privileged network worker for TEST/Custom Connect URIs only.
+- Detect TFT Unreal gameplay via `TFTClient-Win64-Shipping.exe` (Windows process enumeration).
+- No TFT Official Services card, catalog publishing or default CIDR/port rules; routing policy must come from a valid provider-issued TEST config.
+- Retain Wintun/TUN-only UDP gameplay routing and existing protocol compatibility.
+
 ## [0.1.3-beta] - 2026-10-21
 ### Added
 - Added local PUBG: BATTLEGROUNDS game-card artwork, hover/focus caption behavior and a unified Connection Dashboard for Official Services and custom URI sessions.

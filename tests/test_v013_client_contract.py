@@ -4,7 +4,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_v013_version_and_changelog():
     assert (ROOT/'VERSION').read_text(encoding="utf-8").strip() == '0.1.3'
-    assert (ROOT/'RELEASE').read_text(encoding="utf-8").strip() == '0.1.3-beta'
+    assert (ROOT/'RELEASE').read_text(encoding="utf-8").strip() == '0.1.3-r1-beta'
     assert '## [0.1.3-beta]' in (ROOT/'CHANGELOG.md').read_text(encoding="utf-8")
 
 def test_v013_pubg_and_shared_dashboard():

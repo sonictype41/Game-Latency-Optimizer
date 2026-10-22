@@ -198,7 +198,7 @@ void web_connection_snapshot(){
     out+="\"active\":"+std::string(active?"true":"false")+",\"source\":\""+(g_ui->official_session?std::string("official"):std::string("custom"))+"\",";
     out+="\"phase\":\""+phase+"\",\"route\":\""+route+"\",";
     out+="\"ping_ms\":"+(no_stats?"null":number(snap.gameplay_ping_ms))+",\"loss_pct\":"+(no_stats?"null":number(snap.gameplay_loss_pct))+",";
-    out+="\"left\":\""+std::string(left)+"\",\"node\":\""+json_escape(node)+"\",\"message\":\""+json_escape(snap.message)+"\",\"game\":\""+json_escape(g_ui->config?std::string(glo::game_profile(g_ui->config->game_id).key):g_ui->last_ui_game)+"\",\"region\":\""+json_escape(g_ui->last_ui_region)+"\",\"node_visible\":"+(g_ui->relay_endpoint_visible?"true":"false")+"},\"waiting\":"+(g_ui->handoff_task?"true":"false")+",\"history\":"+graph_history_json()+"}";
+    out+="\"left\":\""+std::string(left)+"\",\"node\":\""+json_escape(node)+"\",\"message\":\""+json_escape(snap.message)+"\",\"game\":\""+json_escape(g_ui->config?std::string(glo::game_profile(g_ui->config->game_id).key):g_ui->last_ui_game)+"\",\"region\":\""+json_escape(g_ui->last_ui_region)+"\",\"node_visible\":"+(g_ui->relay_endpoint_visible?"true":"false")+"},\"waiting\":"+((g_ui->handoff_task||g_ui->official_preparing)?"true":"false")+",\"history\":"+graph_history_json()+"}";
     web_emit(out);
     if(g_ui->was_session&&!active&&snap.error&&snap.error->code==glo::ClientErrorCode::SessionExpired)web_emit("{\"type\":\"expired\"}");
     g_ui->was_session=active;
@@ -492,7 +492,7 @@ bool read_text_file(const std::filesystem::path& path,std::string& out,std::stri
 bool clipboard_text(std::string&out,std::string&error){if(!OpenClipboard(g_ui?g_ui->window:nullptr)){error="Clipboard is unavailable";return false;}struct G{~G(){CloseClipboard();}}g;HANDLE h=GetClipboardData(CF_UNICODETEXT);if(!h){error="Clipboard does not contain text";return false;}auto*p=static_cast<const wchar_t*>(GlobalLock(h));if(!p){error="Could not read clipboard";return false;}std::wstring t(p);GlobalUnlock(h);out=narrow(t);if(out.empty()){error="Clipboard config is empty";return false;}return true;}
 
 void apply_config(glo::SessionConfig c,ConfigSource source=ConfigSource::Manual){g_ui->config=std::move(c);g_ui->config_source=source;g_ui->config_consumed=false;const auto&cfg=*g_ui->config;g_ui->options.relay_host=cfg.relay_host;g_ui->options.relay_port=cfg.relay_port;g_ui->options.relay_public_key=cfg.relay_public_key;g_ui->options.session_grant=cfg.grant;g_ui->options.timeout_message=cfg.timeout_message;g_ui->options.game_id=cfg.game_id;g_ui->options.profile_id=cfg.profile_id;g_ui->options.gameplay_ipv4=cfg.gameplay_ipv4;g_ui->options.profile_revision=cfg.profile_revision;g_ui->options.port_min=cfg.port_min;g_ui->options.port_max=cfg.port_max;g_ui->options.port_rules=cfg.port_rules;InvalidateRect(g_ui->window,nullptr,FALSE);}
-bool parse_and_apply(const std::string&text,ConfigSource source=ConfigSource::Manual){glo::SessionConfig c;std::string error;if(!glo::parse_session_config_json(text,c,error)){MessageBoxW(g_ui->window,widen(error).c_str(),L"GLO - Invalid config",MB_OK|MB_ICONERROR);return false;}apply_config(std::move(c),source);return true;}
+bool parse_and_apply(const std::string&text,ConfigSource source=ConfigSource::Manual){glo::SessionConfig c;std::string error;if(!glo::parse_session_config_json(text,c,error)){g_ui->app_log.warn("URI011", "event=session_config_rejected reason="+error);if(g_ui->web_mode)web_emit("{\"type\":\"error\",\"message\":\""+json_escape(error)+"\"}");else MessageBoxW(g_ui->window,widen(error).c_str(),L"GLO - Invalid config",MB_OK|MB_ICONERROR);return false;}apply_config(std::move(c),source);return true;}
 void paste_config(){std::string text,error;if(!clipboard_text(text,error)){MessageBoxW(g_ui->window,widen(error).c_str(),L"GLO",MB_OK|MB_ICONERROR);return;}if(parse_and_apply(text))set_action_feedback(ActionFeedback::Pasted);}
 void import_config(){wchar_t file[32768]{};OPENFILENAMEW ofn{};ofn.lStructSize=sizeof(ofn);ofn.hwndOwner=g_ui->window;ofn.lpstrFilter=L"GLO session config (*.json)\0*.json\0All files\0*.*\0\0";ofn.lpstrFile=file;ofn.nMaxFile=32768;ofn.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;if(!GetOpenFileNameW(&ofn))return;std::string text,error;if(!read_text_file(file,text,error)){MessageBoxW(g_ui->window,widen(error).c_str(),L"GLO",MB_OK|MB_ICONERROR);return;}if(parse_and_apply(text))set_action_feedback(ActionFeedback::Imported);}
 void clear_config_after_use(){g_ui->options.session_grant.clear();if(g_ui->config){g_ui->config->grant.clear();}g_ui->config.reset();g_ui->config_source=ConfigSource::Manual;g_ui->config_consumed=false;}
@@ -501,7 +501,7 @@ void connect_loaded(){
     if(g_ui->options.routing_policy!=glo::RoutingPolicy::DirectOnly&&(!g_ui->config||g_ui->config_consumed)){MessageBoxW(g_ui->window,g_ui->language==Language::Vietnamese?L"Hãy dán hoặc nhập một config phiên mới trước.":L"Paste or import a fresh session config first.",L"GL Optimizer",MB_OK|MB_ICONINFORMATION);return;}
     g_ui->options.dbg_log=g_ui->debug_logging;
     const bool ok=g_ui->client.connect_async(g_ui->options,[](const glo::ClientSnapshot&){if(g_ui&&g_ui->window)PostMessageW(g_ui->window,WM_GLO_UPDATE,0,0);});
-    if(!ok)MessageBoxW(g_ui->window,L"Could not start the GLO network worker.",L"GLO",MB_OK|MB_ICONERROR);
+    if(!ok){if(g_ui->web_mode)web_emit("{\"type\":\"error\",\"message\":\"Could not start the GLO network worker.\"}");else MessageBoxW(g_ui->window,L"Could not start the GLO network worker.",L"GLO",MB_OK|MB_ICONERROR);}
     InvalidateRect(g_ui->window,nullptr,FALSE);
 }
 
@@ -757,7 +757,7 @@ void cancel_handoff(){
 }
 
 void start_handoff_task(const std::wstring& uri,bool connect){
-    if(g_ui->handoff_task){g_ui->app_log.warn("URI003","event=handoff_rejected reason=busy");return;}
+    if(g_ui->handoff_task){g_ui->app_log.warn("URI003","event=handoff_rejected reason=busy");if(g_ui->web_mode)web_emit("{\"type\":\"error\",\"message\":\"A connection request is already in progress.\"}");return;}
     auto task=std::make_shared<HandoffTask>();task->connecting=connect;
     g_ui->handoff_task=task;g_ui->modal=InAppModal::HandoffBusy;
     InvalidateRect(g_ui->window,nullptr,FALSE);
@@ -765,7 +765,7 @@ void start_handoff_task(const std::wstring& uri,bool connect){
 }
 
 void perform_handoff_connect(const std::wstring& uri){
-    if(g_ui&&g_ui->web_mode)web_emit("{\"type\":\"connect-progress\",\"stage\":\"verifying\"}");
+    if(g_ui&&g_ui->web_mode)web_emit("{\"type\":\"connect-progress\",\"stage\":\"verifying\",\"source\":\""+std::string(g_ui->official_session?"services":"custom")+"\"}");
     start_handoff_task(uri,true);
 }
 
@@ -795,7 +795,8 @@ void handle_handoff_uri(const std::wstring& uri){
     auto parsed=parse_handoff_uri(uri);
     if(!parsed.link){
         g_ui->app_log.error("URI002",std::string("event=handoff_parse_failed reason=")+handoff_error_name(parsed.error)+" "+safe);
-        MessageBoxW(g_ui->window,handoff_error_reason(parsed.error).c_str(),L"GLO - Invalid URI",MB_OK|MB_ICONERROR);
+        if(g_ui->web_mode)web_emit("{\"type\":\"error\",\"message\":\""+json_escape(narrow(handoff_error_reason(parsed.error)))+"\"}");
+        else MessageBoxW(g_ui->window,handoff_error_reason(parsed.error).c_str(),L"GLO - Invalid URI",MB_OK|MB_ICONERROR);
         return;
     }
     g_ui->app_log.info("URI004","event=handoff_parse_ok token_present=true token_length="+std::to_string(parsed.link->token.size()));
@@ -826,7 +827,7 @@ void finish_handoff_task(HWND hwnd){
     }else if(!config.empty()){
         g_ui->app_log.info("URI010","event=handoff_redeem_ok");
         if(parse_and_apply(config,trusted?ConfigSource::OfficialHandoff:ConfigSource::ThirdPartyHandoff))connect_loaded();
-    }else MessageBoxW(hwnd,L"Incomplete handoff response.",L"GLO - Handoff",MB_OK|MB_ICONERROR);
+    }else {if(g_ui->web_mode)web_emit("{\"type\":\"error\",\"message\":\"Incomplete handoff response.\"}");else MessageBoxW(hwnd,L"Incomplete handoff response.",L"GLO - Handoff",MB_OK|MB_ICONERROR);}
     InvalidateRect(hwnd,nullptr,FALSE);
     web_connection_snapshot();
 }
@@ -1141,6 +1142,7 @@ void on_web_action(const std::wstring& raw) {
         if(another_connection_busy()){show_overlap_guard();return;}
         const auto game=json_string_field(data,"game"),region=json_string_field(data,"region");
         if(game&&region&&(*game=="roblox"||*game=="valorant"||*game=="pubg")&&region->size()<=8){g_ui->official_session=true;g_ui->last_ui_game=*game;g_ui->last_ui_region=*region;g_ui->official_preparing=true;g_ui->official_api->prepare(*game,*region);}
+        else web_emit("{\"type\":\"error\",\"message\":\"Unsupported Services game or region.\"}");
     }else if(*action=="custom.inspect"){
         auto uri=json_string_field(data,"uri");if(uri&&uri->size()<4096)handle_handoff_uri(widen(*uri));
     }else if(*action=="custom.paste"){

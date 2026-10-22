@@ -9,6 +9,10 @@ int main() {
     static_assert(game_supported(GameId::Roblox));
     static_assert(game_supported(GameId::Valorant));
     static_assert(game_supported(GameId::PUBG));
+    static_assert(game_supported(GameId::TFT));
+    static_assert(static_cast<int>(GameId::Valorant) == 4);
+    static_assert(static_cast<int>(GameId::TFT) == 5);
+    static_assert(game_profile(GameId::TFT).key == "tft");
     static_assert(game_profile(GameId::PUBG).key == "pubg");
     static_assert(game_profile(GameId::Valorant).key == "valorant");
     static_assert(!game_supported(GameId::Minecraft));

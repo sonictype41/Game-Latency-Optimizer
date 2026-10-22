@@ -33,8 +33,8 @@ public:
 private:
     GameId game_id_{default_game()};
     std::unique_ptr<RobloxDetector> roblox_;
-    // VALORANT process discovery uses Windows process enumeration only.
-    bool valorant_{false};
+    // VALORANT, PUBG and TFT use Windows process enumeration only.
+    bool dedicated_game_{false};
 };
 
 }  // namespace glo

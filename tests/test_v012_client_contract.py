@@ -6,7 +6,7 @@ def read(name): return (ROOT/name).read_text(encoding='utf-8')
 
 def test_versions_and_release_changelog():
     assert read('VERSION').strip()=='0.1.3'
-    assert read('RELEASE').strip()=='0.1.3-beta'
+    assert read('RELEASE').strip()=='0.1.3-r1-beta'
     assert '## [0.1.3-beta]' in read('CHANGELOG.md')
 
 def test_native_minimize_separate_from_tray():

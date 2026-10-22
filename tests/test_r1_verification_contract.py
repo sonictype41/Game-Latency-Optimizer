@@ -24,7 +24,7 @@ class R1VerificationContract(unittest.TestCase):
 
     def test_wire_version_stays_compatible(self):
         self.assertEqual((ROOT/'VERSION').read_text(encoding='utf-8').strip(), '0.1.3')
-        self.assertEqual((ROOT/'RELEASE').read_text(encoding='utf-8').strip(), '0.1.3-beta')
+        self.assertEqual((ROOT/'RELEASE').read_text(encoding='utf-8').strip(), '0.1.3-r1-beta')
 
 if __name__ == '__main__':
     unittest.main()

@@ -12,6 +12,7 @@ enum class GameId : std::uint8_t {
     PUBG = 2,
     LeagueOfLegends = 3,
     Valorant = 4,
+    TFT = 5,  // Hidden TEST/Custom Connect support; not an Official Services card.
 };
 
 struct GameProfile {
@@ -21,12 +22,13 @@ struct GameProfile {
     bool supported{};
 };
 
-inline constexpr std::array<GameProfile, 5> kGameProfiles{{
+inline constexpr std::array<GameProfile, 6> kGameProfiles{{
     {GameId::Roblox, "roblox", "Roblox", true},
     {GameId::Minecraft, "minecraft", "Minecraft", false},
     {GameId::PUBG, "pubg", "PUBG", true},
     {GameId::LeagueOfLegends, "league-of-legends", "League of Legends", false},
     {GameId::Valorant, "valorant", "VALORANT", true},
+    {GameId::TFT, "tft", "Teamfight Tactics", true},
 }};
 
 constexpr const GameProfile& game_profile(GameId id) noexcept {
