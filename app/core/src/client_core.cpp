@@ -20,6 +20,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <cmath>
 #include <chrono>
@@ -337,6 +338,22 @@ void ClientCore::worker(ClientOptions options) {
         return;
     }
 
+    // Privacy applies to the log sink, not to the actual relay socket address.
+    // Official labels originate in the signed/trusted session config; remove any
+    // host-shaped or control-character values before writing diagnostics.
+    std::string relay_log_label="GLO-Relay";
+    if(options.hide_relay_endpoint_in_log){
+        const auto& name=options.relay_log_name;
+        const bool plausible=!name.empty()&&name.size()<=64&&
+            name.find('.')==std::string::npos&&name.find(':')==std::string::npos&&
+            std::all_of(name.begin(),name.end(),[](unsigned char ch){
+                return std::isalnum(ch)||ch=='-'||ch=='_';
+            });
+        if(plausible)relay_log_label=name;
+    }
+    const std::string relay_log_target=options.hide_relay_endpoint_in_log
+        ? "node="+relay_log_label
+        : "endpoint="+options.relay_host+":"+std::to_string(options.relay_port);
     addrinfo hints{};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
@@ -346,12 +363,12 @@ void ClientCore::worker(ClientOptions options) {
     const int resolve_rc = getaddrinfo(options.relay_host.c_str(), port.c_str(), &hints, &result);
     if (resolve_rc != 0 || !result) {
         const std::string detail = "getaddrinfo failed (code=" + std::to_string(resolve_rc) + ")";
-        log.error("NET002", "could not resolve relay host=" + options.relay_host + " " + detail);
+        log.error("NET002", "could not resolve relay "+relay_log_target+" " + detail);
         WSACleanup();
         publish_connect_error(
             ClientErrorCode::RelayResolveFailed,
             "GLO - Connection error",
-            "GLO could not resolve the relay server '" + options.relay_host + "'.\n\n" + detail +
+            "GLO could not resolve the relay server '" + (options.hide_relay_endpoint_in_log?relay_log_label:options.relay_host) + "'.\n\n" + detail +
                 "\n\nCheck your Internet connection and relay address, then try again.");
         return;
     }
@@ -456,8 +473,7 @@ void ClientCore::worker(ClientOptions options) {
         snapshot_.active_route = ActiveRoute::Direct;
         snapshot_.session_remaining_seconds = transport.remaining_seconds();
     }
-    log.info("VERIFY000", "event=relay_selected endpoint="+options.relay_host+":"+
-             std::to_string(options.relay_port)+" profile="+options.profile_id);
+    log.info("VERIFY000", "event=relay_selected "+relay_log_target+" profile="+options.profile_id);
     log.info("RELAY003", "event=handshake_ok session=" + std::to_string(sid) +
                            " generation=" + std::to_string(generation) +
                            " rtt_ms=" + std::to_string(handshake_rtt_ms));

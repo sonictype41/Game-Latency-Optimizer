@@ -9,7 +9,6 @@
 .game-disconnect{margin-top:auto;width:100%;padding:13px 10px}
 #service-stats:not(.with-quality) .stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 #service-stats:not(.with-quality) #service-stat-ping,#service-stats:not(.with-quality) #service-stat-loss{display:none}
-#service-authenticated.session-live > .wallet{display:none}
 .game-connect{opacity:0;visibility:hidden;transform:translateY(10px);pointer-events:none;transition:opacity .2s,transform .2s,visibility .2s}
 .game-card:hover .game-connect,.game-card:focus-within .game-connect,.game-card:focus-visible .game-connect,.game-card.is-connecting .game-connect{opacity:1;visibility:visible;transform:none;pointer-events:auto}
 .game-card.is-connecting{pointer-events:none;border-color:var(--accent-text)}
@@ -33,3 +32,72 @@
 .node-stat strong{word-break:break-all}.connected-game img{height:260px}.connected-layout{gap:18px}#custom-connect-form.hidden{display:none}
 
 .placeholder-image{object-fit:contain!important;background:var(--raised);padding:22px}
+
+/* r2: settings owns its title row, and native-connection lock makes mode a label. */
+body.settings-layout .topbar{display:none}
+body.settings-layout main{margin-top:18px}
+body.connect-locked .mode-trigger{opacity:1;cursor:default;pointer-events:none}
+body.connect-locked .mode-trigger .chevron{display:none}
+body.connect-locked #mode-menu{display:none!important}
+#connect-progress:not(.hidden){max-width:900px;margin:0 auto 20px;min-height:54px}
+#connect-progress .spinner{width:22px;height:22px;border-width:3px}
+
+/* r3: desktop-shell interaction policy. Input editing remains fully selectable. */
+html,body,body *{-webkit-user-select:none;user-select:none;-webkit-user-drag:none}
+input:not([type=checkbox]):not([type=radio]),textarea{-webkit-user-select:text;user-select:text}
+.mode-locked .mode-trigger{pointer-events:none;cursor:default;opacity:1;background:transparent!important}
+.mode-locked .mode-trigger .chevron{display:none!important}
+.mode-locked #mode-menu{display:none!important}
+.input-context-menu{position:fixed;z-index:100;width:235px;padding:5px;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 15px 36px var(--shadow)}
+.input-context-menu button{width:100%;padding:10px 11px;border-radius:7px;display:flex;align-items:center;justify-content:space-between;text-align:left;background:transparent;color:var(--text);font-size:13px}
+.input-context-menu button:not(:disabled):hover{background:var(--raised)}
+.input-context-menu button:disabled{opacity:.35;cursor:default}
+.input-context-menu kbd{font-family:'Segoe UI',sans-serif;color:var(--muted);font-size:11px}
+.edit-divider{margin:4px 9px;border-top:1px solid var(--border)}
+.logout-loading{position:fixed;inset:0;z-index:90;background:rgba(12,17,14,.83);color:#ecf6e8;display:flex;align-items:center;justify-content:center;gap:14px;font-size:14px}
+.logout-loading .spinner{width:26px;height:26px;border:3px solid #34472d;border-top-color:#b5f36a;border-radius:50%;animation:spin .8s linear infinite}
+
+/* r4: Only the mode selector is locked. Account, Time Bank, Settings and Theme remain usable. */
+.top-actions{isolation:isolate}
+.timebank-wrap{position:relative;display:flex;align-items:center}
+.timebank-menu{width:400px;max-width:calc(100vw - 32px);min-width:0;right:-96px;padding:12px 14px;z-index:15}
+.timebank-item{min-width:0;display:grid;gap:11px}
+.timebank-choice{display:flex!important;align-items:center;gap:8px!important;width:100%;padding:3px 0!important;font-size:13px!important;line-height:21px;color:var(--text);text-align:left;border-radius:6px}
+.timebank-choice:hover{background:transparent!important}
+.timebank-check{width:17px;height:17px;color:var(--accent-text);opacity:0}
+.timebank-choice[aria-checked=true] .timebank-check{opacity:1}
+.timebank-item-label{white-space:nowrap;font-weight:700;min-width:0}
+.timebank-item-label #wallet-value{font-weight:600;color:var(--muted)}
+.timebank-secondary{display:flex;align-items:center;gap:12px;width:100%;min-width:0}
+.timebank-progress{margin:0;flex:1;min-width:55px;height:8px}
+.timebank-earn{width:auto!important;flex:none;white-space:nowrap;display:inline-flex!important;align-items:center;justify-content:center;padding:9px 11px!important;color:#17240c!important;background:var(--lime)!important;font-size:12px!important;font-weight:750!important}
+.timebank-earn:hover{background:var(--lime-hover)!important}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+body[data-theme=light] .timebank-earn{color:#17240c!important}
+@media(max-width:700px){.timebank-menu{right:-80px}.timebank-item-label{font-size:12px}}
+/* Compact idle Services following removal of the large lobby wallet. */
+#service-authenticated #service-picker .section-title{margin-bottom:19px}
+#service-authenticated #service-picker .game-gallery{margin-top:8px}
+
+/* r5: only the button is a connect target; artwork and captions are inert. */
+.game-card{cursor:default}
+.game-card .game-connect{cursor:pointer}
+.wallet-sync-status{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
+.wallet-sync-status.wallet-status-error{color:#dfae77}
+.quality-placeholder{min-height:240px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;padding:28px 24px}
+.quality-placeholder-icon{width:65px;height:65px;color:var(--muted);opacity:.8;flex:none}
+.quality-placeholder p{font-size:14px;font-weight:650;max-width:520px;margin:0;line-height:1.55}
+.quality-placeholder small{font-size:12px;color:var(--muted);line-height:1.5}
+
+/* v0.1.4: ART is a Services preference only; ordinary relay stays opaque. */
+.lobby-routing-options{display:flex;gap:16px;align-items:end;justify-content:flex-end;flex-wrap:wrap}
+.art-preference{display:flex;align-items:center;gap:5px;padding-bottom:13px;white-space:nowrap}
+.art-checkbox-label{display:flex;gap:8px;align-items:center;font-size:12px;font-weight:650;cursor:pointer}
+.art-checkbox-label input{accent-color:var(--lime);width:16px;height:16px}
+.art-preference .help-btn{padding:3px}
+.art-session-pill{font-size:10px;white-space:nowrap}
+@media(max-width:760px){.lobby-routing-options{justify-content:flex-start;gap:12px}}
+
+/* v0.1.5: four fixed artwork columns at normal desktop sizes. */
+.game-gallery{grid-template-columns:repeat(4,minmax(0,210px));justify-content:start}
+@media(max-width:950px){.game-gallery{grid-template-columns:repeat(auto-fit,minmax(180px,210px))}}

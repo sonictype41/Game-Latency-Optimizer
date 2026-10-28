@@ -7,7 +7,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_hidden_tft_native_contract():
+def test_tft_native_contract_and_official_card():
     profiles = (ROOT / 'app/core/include/glo/game_profile.hpp').read_text(encoding='utf-8')
     worker = (ROOT / 'app/core/src/network_worker.cpp').read_text(encoding='utf-8')
     detector = (ROOT / 'app/core/src/game_detector.cpp').read_text(encoding='utf-8')
@@ -17,8 +17,8 @@ def test_hidden_tft_native_contract():
     assert '{GameId::TFT, "tft", "Teamfight Tactics", true}' in profiles
     assert 'game!=static_cast<int>(GameId::TFT)' in worker
     assert 'TFTClient-Win64-Shipping.exe' in detector
-    assert 'data-game="tft"' not in html
-    assert '(*game=="roblox"||*game=="valorant"||*game=="pubg")' in native  # Official closed
+    assert 'data-game="tft"' in html
+    assert '(*game=="roblox"||*game=="valorant"||*game=="pubg"||*game=="tft")' in native  # Official game now allowed
     assert 'Unsupported game profile' not in native  # Native now delegates to parser
 
 

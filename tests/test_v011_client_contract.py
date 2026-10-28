@@ -5,12 +5,12 @@ ROOT=Path(__file__).resolve().parents[1]
 
 class V011ClientContract(unittest.TestCase):
     def test_release(self):
-        self.assertEqual((ROOT/'VERSION').read_text(encoding='utf-8').strip(),'0.1.3')
-        self.assertEqual((ROOT/'RELEASE').read_text(encoding='utf-8').strip(),'0.1.3-r1-beta')
+        self.assertEqual((ROOT/'VERSION').read_text(encoding='utf-8').strip(),'0.1.5')
+        self.assertEqual((ROOT/'RELEASE').read_text(encoding='utf-8').strip(),'0.1.5-beta')
     def test_custom_mode_no_account_and_svg(self):
         html=(ROOT/'app/frontend/ui/index.html').read_text(encoding='utf-8')
         js=(ROOT/'app/frontend/ui/app.js').read_text(encoding='utf-8')
-        self.assertIn("show('account-btn',state.mode==='services')",js)
+        self.assertIn("show('account-btn',state.mode==='services'&&state.logged&&!state.logoutPending)",js)
         self.assertNotIn('Independent',html)
         self.assertNotIn('CONNECTION SETUP',html)
         self.assertIn('i-github',html)
@@ -22,9 +22,9 @@ class V011ClientContract(unittest.TestCase):
         self.assertIn('quality_history.size()>151',cpp)
         self.assertIn('now-g_ui->quality_history.front().tick>300000',cpp)
         self.assertIn('settings.optimizeMemory',cpp)
-        self.assertIn('settings.showGraph',cpp)
+        self.assertNotIn('settings.showGraph',cpp)
         self.assertIn('optimize_memory_on_tray{true}',cpp)
-        self.assertIn('show_network_quality_graph{true}',cpp)
+        self.assertNotIn('show_network_quality_graph',cpp)
         self.assertIn('WM_GLO_WEB_TRAY',cpp)
         self.assertIn('g_ui->webview.stop()',cpp)
     def test_async_callbacks_weak(self):
@@ -37,11 +37,11 @@ class V011ClientContract(unittest.TestCase):
         self.assertIn("c.phase==='gameplay'&&c.route==='RELAY'",js)
         self.assertIn('Number.isFinite(c.ping_ms)',js)
         self.assertIn('Number.isFinite(c.loss_pct)',js)
-        self.assertIn("state.showGraph&&state.page!== 'settings'",js)
+        self.assertIn("state.page!== 'settings'",js)
         self.assertIn('if(!isRelay(c)){resetGraph();}',js)
     def test_i18n(self):
         js=(ROOT/'app/frontend/ui/app.js').read_text(encoding='utf-8')
-        for key in ('settings.memory','settings.graph','services.title','connect.warning','modal.time.title','stats.loss'):
+        for key in ('settings.memory','chart.placeholder','services.title','connect.warning','modal.time.title','stats.loss'):
             self.assertIn("'"+key+"'",js)
         self.assertIn('document.documentElement.lang=state.language',js)
 if __name__=='__main__':unittest.main()

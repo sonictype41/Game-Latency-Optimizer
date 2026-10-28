@@ -17,7 +17,7 @@ class Webview2Contract(unittest.TestCase):
             self.assertIn(statement,src)
         html=(ROOT/'app/frontend/ui/index.html').read_text(encoding='utf-8')
         self.assertIn("connect-src 'none'",html)
-        self.assertIn('Nhận thêm thời gian',html)
+        self.assertIn('Nhận thời gian',html)
         self.assertIn('valorant-presskit.jpg',html)
     def test_native_routes_preserved(self):
         cpp=(ROOT/'app/frontend/main.cpp').read_text(encoding='utf-8')
@@ -32,7 +32,8 @@ class Webview2Contract(unittest.TestCase):
         cmake=(ROOT/'CMakeLists.txt').read_text(encoding='utf-8')
         self.assertIn('std::string json_quote(',api)
         self.assertNotIn('quoted(',api)
-        self.assertEqual(api.count('json_quote('),8)
+        # r2 adds JSON-escaped, allowlisted API error fields to diagnostic messages.
+        self.assertGreaterEqual(api.count('json_quote('),10)
         self.assertIn('open_external_link(g_ui->window,widen(*url).c_str()',cpp)
         self.assertIn('#include <objbase.h>',cpp)
         self.assertIn('CoInitializeEx(',cpp)

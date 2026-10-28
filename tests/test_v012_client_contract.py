@@ -5,8 +5,8 @@ ROOT=Path(__file__).resolve().parents[1]
 def read(name): return (ROOT/name).read_text(encoding='utf-8')
 
 def test_versions_and_release_changelog():
-    assert read('VERSION').strip()=='0.1.3'
-    assert read('RELEASE').strip()=='0.1.3-r1-beta'
+    assert read('VERSION').strip()=='0.1.5'
+    assert read('RELEASE').strip()=='0.1.5-beta'
     assert '## [0.1.3-beta]' in read('CHANGELOG.md')
 
 def test_native_minimize_separate_from_tray():
@@ -29,7 +29,8 @@ def test_new_settings_and_hover_and_dashboard():
     assert ".game-card:hover .game-connect" in css
     assert 'id="service-disconnect"' in html
     assert 'id="service-stat-ping"' in html
-    assert '#service-authenticated.session-live > .wallet{display:none}' in css
+    assert '#service-authenticated.session-live > .wallet{display:none}' not in css
+    assert 'id="timebank-wrap"' in read('app/frontend/ui/index.html')
     assert 'classList.toggle(\'with-quality\',quality)' in js
     assert '.settings-title,.settings-sections{width:min(100%,790px);margin-left:auto;margin-right:auto}' in css
 

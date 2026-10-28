@@ -183,7 +183,7 @@ if(WIN32)
         message(FATAL_ERROR "WebView2Loader.dll missing: ${GLO_WEBVIEW2_LOADER}")
     endif()
     target_include_directories(GLO PRIVATE app/core/include protocol/include "${GLO_WEBVIEW2_SDK_ROOT}/build/native/include")
-    target_link_libraries(GLO PRIVATE glo_client_core glo_session_config user32 gdi32 shell32 ole32 comdlg32 winhttp crypt32)
+    target_link_libraries(GLO PRIVATE glo_client_core glo_session_config user32 gdi32 shell32 ole32 comdlg32 winhttp crypt32 gdiplus)
 
 
     if(MINGW AND GLO_STATIC_MINGW)

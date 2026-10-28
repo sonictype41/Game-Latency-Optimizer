@@ -3,8 +3,8 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 
 def test_v013_version_and_changelog():
-    assert (ROOT/'VERSION').read_text(encoding="utf-8").strip() == '0.1.3'
-    assert (ROOT/'RELEASE').read_text(encoding="utf-8").strip() == '0.1.3-r1-beta'
+    assert (ROOT/'VERSION').read_text(encoding="utf-8").strip() == '0.1.5'
+    assert (ROOT/'RELEASE').read_text(encoding="utf-8").strip() == '0.1.5-beta'
     assert '## [0.1.3-beta]' in (ROOT/'CHANGELOG.md').read_text(encoding="utf-8")
 
 def test_v013_pubg_and_shared_dashboard():
@@ -16,7 +16,7 @@ def test_v013_pubg_and_shared_dashboard():
     assert 'id="custom-stats"' not in html
     assert "state.page==='connect'" in js
     assert 'custom-game-placeholder.png' in js
-    assert 'showGraph' in js and "c.route==='RELAY'" in js
+    assert 'showGraph' not in js and "c.route==='RELAY'" in js
     assert "send('custom.toggleIp')" in js
 
 def test_v013_native_overlap():

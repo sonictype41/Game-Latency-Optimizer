@@ -114,7 +114,7 @@ public:
                 const HRESULT mapping=view3->SetVirtualHostNameToFolderMapping(L"glo.local",shared->folder.c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
                 view3->Release();
                 if(SUCCEEDED(mapping)){
-                    RECT r{};GetClientRect(shared->parent,&r);ctrl->put_Bounds(r);ctrl->put_IsVisible(TRUE);
+                    RECT r{};GetClientRect(shared->parent,&r);ctrl->put_Bounds(r);ctrl->put_IsVisible(FALSE);
                     shared->view->Navigate(L"https://glo.local/index.html");
                     if(shared->ready)*shared->ready=true;
                 }
@@ -167,6 +167,7 @@ bool WebviewHost::start(HWND hwnd,const std::filesystem::path& folder,MessageCal
     if(FAILED(hr)){error=L"WebView2 Evergreen Runtime is required. Install it from Microsoft and restart GLO.";stop();return false;}
     return true;
 }
+void WebviewHost::reveal(){if(internal_&&internal_->controller&&ready_){if(SUCCEEDED(internal_->controller->put_IsVisible(TRUE)))shown_=true;}}
 void WebviewHost::resize() const {if(internal_&&internal_->controller){RECT r{};GetClientRect(internal_->parent,&r);internal_->controller->put_Bounds(r);}}
 void WebviewHost::post_json(const std::string& json) const {if(!internal_||!internal_->view)return;const auto wide=from_utf8(json);if(!wide.empty())internal_->view->PostWebMessageAsJson(wide.c_str());}
-void WebviewHost::stop(){ready_=false;if(internal_){internal_->shutdown();internal_.reset();}}
+void WebviewHost::stop(){ready_=false;shown_=false;if(internal_){internal_->shutdown();internal_.reset();}}

@@ -84,6 +84,10 @@ struct ClientOptions {
     // scheduler and issuer semantics live outside the client.
     std::string relay_host;
     std::uint16_t relay_port{43170};
+    // Diagnostics-only presentation hint from the trusted Official session config.
+    // Never changes relay connection, transport, IPC, or wire formats.
+    bool hide_relay_endpoint_in_log{false};
+    std::string relay_log_name;
     std::string relay_public_key;
     std::vector<std::uint8_t> session_grant;
     std::string timeout_message{"Session expired."};

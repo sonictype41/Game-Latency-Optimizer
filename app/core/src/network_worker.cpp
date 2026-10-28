@@ -301,7 +301,7 @@ int worker_main(const std::wstring& pipe_name,const std::string& secret){
     std::string line;
     while(read_line(pipe,line)){
         const auto f=split_tabs(line);if(f.empty())continue;
-        if(f[0]=="CONNECT"&&(f.size()==15||f.size()==16)){
+        if(f[0]=="CONNECT"&&(f.size()==15||f.size()==16||f.size()==18)){
             int game=0,direct=0,debug=0;unsigned grace=0,port=0;
             std::string host,pin,timeout,profile_id,profile_ips;std::vector<std::uint8_t> grant;unsigned lo=0,hi=0;std::uint64_t revision=0;
             if(!parse_int(f[1],game)||!parse_int(f[2],direct)||!parse_int(f[3],debug)||!parse_int(f[4],grace)||
@@ -322,8 +322,18 @@ int worker_main(const std::wstring& pipe_name,const std::string& secret){
                 if(profile_id.empty()||revision==0||lo==0||hi>65535||lo>hi){rt.send("WORKER_ERROR\t"+hex_encode("Invalid profile"));continue;}
                 opt.profile_id=std::move(profile_id);opt.gameplay_ipv4=std::move(profile_ips);opt.profile_revision=revision;
                 opt.port_min=static_cast<std::uint16_t>(lo);opt.port_max=static_cast<std::uint16_t>(hi);
-                if(f.size()==16){std::string expr;if(!hex_decode_string(f[15],expr)||!parse_udp_port_rules(expr,opt.port_rules)){rt.send("WORKER_ERROR\t"+hex_encode("Invalid UDP Port Rules"));continue;}}
+                if(f.size()>=16){std::string expr;if(!hex_decode_string(f[15],expr)||!parse_udp_port_rules(expr,opt.port_rules)){rt.send("WORKER_ERROR\t"+hex_encode("Invalid UDP Port Rules"));continue;}}
                 else opt.port_rules={{opt.port_min,opt.port_max}};
+                // Optional r4 diagnostics metadata; legacy commands retain their original semantics.
+                if(f.size()==18){
+                    int private_log=0;std::string label;
+                    if(!parse_int(f[16],private_log)||(private_log!=0&&private_log!=1)||
+                       !hex_decode_string(f[17],label)||label.size()>128){
+                        rt.send("WORKER_ERROR\t"+hex_encode("Invalid diagnostics metadata"));continue;
+                    }
+                    opt.hide_relay_endpoint_in_log=private_log!=0;
+                    opt.relay_log_name=std::move(label);
+                }
             }
             rt.core.connect_async(opt,[&rt](const ClientSnapshot& s){rt.send(serialize_state(s));});
         }else if(f[0]=="DEBUG"&&f.size()>=2){int on=0;if(parse_int(f[1],on))rt.core.set_debug_logging(on!=0);
@@ -432,7 +442,8 @@ bool NetworkWorkerClient::connect_async(const ClientOptions& options,UpdateCallb
     {std::scoped_lock lock(impl_->mu);impl_->callback=std::move(cb);impl_->snapshot=ClientSnapshot{};impl_->snapshot.state=ConnectionState::Connecting;impl_->snapshot.message="Starting network worker...";}
     const std::string command="CONNECT\t"+std::to_string(static_cast<int>(options.game_id))+"\t0\t"+(options.dbg_log?"1":"0")+"\t"+std::to_string(std::clamp(options.force_handover_grace_ms,500u,3000u))+"\t"+hex_encode(options.relay_host)+"\t"+std::to_string(options.relay_port)+"\t"+hex_encode(options.relay_public_key)+"\t"+hex_encode(options.session_grant)+"\t"+hex_encode(options.timeout_message)+"\t"+hex_encode(options.profile_id)+"\t"+
         hex_encode(options.gameplay_ipv4)+"\t"+std::to_string(options.profile_revision)+"\t"+
-        std::to_string(options.port_min)+"\t"+std::to_string(options.port_max)+"\t"+hex_encode(udp_port_rules_text(options.port_rules));
+        std::to_string(options.port_min)+"\t"+std::to_string(options.port_max)+"\t"+hex_encode(udp_port_rules_text(options.port_rules))+"\t"+
+        (options.hide_relay_endpoint_in_log?"1":"0")+"\t"+hex_encode(options.relay_log_name.empty()?std::string("GLO-Relay"):options.relay_log_name);
     try{
         impl_->starter_running.store(true,std::memory_order_release);
         impl_->starter=std::thread([impl=impl_.get(),command]{

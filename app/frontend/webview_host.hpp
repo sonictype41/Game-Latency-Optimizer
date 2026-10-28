@@ -14,6 +14,8 @@ public:
     WebviewHost& operator=(const WebviewHost&)=delete;
     bool start(HWND parent, const std::filesystem::path& ui_folder, MessageCallback callback, std::wstring& error);
     void resize() const;
+    void reveal();
+    bool shown() const noexcept {return shown_;}
     void post_json(const std::string& utf8_json) const;
     void stop();
     bool ready() const noexcept { return ready_; }
@@ -21,4 +23,5 @@ private:
     class Internal;
     std::shared_ptr<Internal> internal_;
     bool ready_{false};
+    bool shown_{false};
 };

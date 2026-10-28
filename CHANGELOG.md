@@ -1,4 +1,164 @@
+## [0.1.5-beta] - 2026-10-27
+
+### Added
+- Teamfight Tactics as the fourth Official Services card, with uploaded TFT poster artwork and supported-game selection in the native Services handoff.
+- Advanced Routing selection from v0.1.4 remains an official-service preference, not a feature of the OSS game packet core.
+
+### Improved
+- Desktop window width fits exactly four 210px cards plus 17px gaps and 32px margins at normal DPI; responsive fallback on small monitors.
+- Correct Vietnamese/English Advanced Routing labels and tooltips.
+- No duplicate "Connected / Waiting for game" text for ordinary relay connections; use WAITING/RELAY and the optional Advanced Routing badge.
+- Time Bank, UI recovery and responsive Connected Dashboard improvements from prior updates are preserved.
+
+### Fixed
+- Corrected duplicated localization keys for the Advanced Routing checkbox and tooltip.
+- Removed redundant waiting-status text on the Standard connected card.
+
+### Compatibility and limitations
+- Live TFT routing requires the Production operator to publish a verified SG game profile; the client cannot fabricate destinations.
+- No ART/UMTP changes to the OSS network engine, relay, packet transport or wire protocol. Windows binary not built on Linux.
+
+## [0.1.4-beta] - 2026-10-27
+
+### Added
+- Optional Advanced Routing checkbox immediately to the left of region selection in GLO Services, default off, with a translated tooltip.
+- Read-only ART Time-Factor sourced from authenticated Production catalogue; ART selection disabled if the server does not advertise a valid factor.
+- Advanced Routing label and Route name on the Connected dashboard when an official ART session has been chosen.
+- Native-to-frontend display metadata that does not modify the session-config schema, network core, ordinary relay engine or client–relay wire protocol.
+
+### Changed
+- Official Services prepare request includes standard/advanced routing preference; backend owns route selection and billing.
+- Cached authenticated catalogue retains the advertised factor after restoring WebView2.
+
+### Fixed
+- ART factor cache survives WebView2 reconstruction without falling back to a fabricated default.
+
+### Security & compatibility
+- No ART/UMTP logic is introduced into the OSS network engine, relay, packet inspection, or wire protocol.
+- Third-party Custom Connect stays unchanged and can still use ordinary provider URI sessions.
+- GLO Services errors are displayed from backend error codes; the client cannot independently guarantee refunds.
+
+### Known limitations
+- No trusted downstream ART RTT feed is available in this baseline; client measures the ordinary candidate HEAD RTT, not a verified end-to-end estimate.
+- Windows executable/installer has not been built or smoke-tested in this Linux environment.
+
 # Changelog — public OSS releases only
+
+## [0.1.3-r5-beta] - 2026-10-27
+
+### Added
+- **On-demand Free Time Bank refresh**: opening the 400px Time Bank dropdown requests a wallet read from the native Official API with a **15-second successful-result cache**, loading indicator (`Đang cập nhật...`) and unobtrusive error status. In-flight requests are coalesced; stale balances remain visible after transient failures.
+- **Connection-quality placeholder**: a local inline SVG and localized gameplay-waiting/collecting messages occupy the empty stats area until real RELAY gameplay samples exist. No synthetic metrics or mock chart are drawn.
+- **Auth recovery**: transient startup/network errors receive a bounded identity verification retry; a previously verified account does not lose the Services UI because of a failed balance refresh. WebView2 recreation replays cached account, catalog and wallet data without an automatic wallet poll.
+
+### Changed
+- Wallet checks are separated from catalog retrieval: the Time Bank refresh only requests `/app/me` (the existing balance source). A cache is invalidated after official connection attempts or completed Disconnect, and cleared on Logout. No new backend endpoint or billing semantics.
+- The game tile is presentation-only. **Only** its actual Connect button starts a session (also with keyboard activation); clicking cover art, title or card background does nothing.
+- Quality history collection/graph rendering is always enabled when eligible gameplay data exists. The redundant Show Graph setting, native persistence field and its UI/translation handling are removed. Legacy `show_network_quality_graph=false` settings are ignored.
+
+### Fixed
+- A transient network/HTTP 429/5xx failure on a wallet refresh no longer automatically turns an authenticated Services window into the blocking `Could not verify sign-in` screen. Definitive token invalidation is still enforced.
+- Unnecessary 30-second timer-based wallet/account/catalog polling is removed; restoring the desktop UI does not trigger a network wallet refresh.
+
+### Security / compatibility
+- Retains Windows DPAPI refresh token handling, authenticated preparation, and Safe Logout/Disconnect sequencing; no token material is exposed to WebView2. No ART/UMTP knowledge is introduced to OSS client/ordinary relay.
+- Does not change the Wintun dataplane, public relay wire protocol, Production, or any WebView2 System Tray minimize/recreate policy. `VERSION` remains `0.1.3`.
+
+### Validation limits
+- Source/contract tests, Node.js frontend simulations, HTML structure and ZIP CRC are checked in this environment. Windows EXE/NSIS compilation and live WebView2/API/gameplay validation are not available here. See `RELEASE_VALIDATION_0.1.3-r5-beta.md`.
+
+## [0.1.3-r4-beta] - 2026-10-27
+
+### Added
+- **Topbar Time Bank selector:** the Free wallet is now a compact icon beside Account, visible only for logged-in GLO Services sessions, including both lobby and active-session views. The dropdown is approximately **400 CSS px** wide with exactly two visual rows: the selected **Free Time Bank (x / y phút)** item (checkmark) and a single line containing the progress bar plus the green **Nhận thời gian / Earn time** button. Its original `open.time` action and backend wallet fields are retained, including `remaining_seconds + reserved_seconds` for the displayed total; reserved/available information remains accessible to assistive technologies.
+- An exclusive `radiogroup` / `radio` selection foundation for future bank types. **Only Free exists in r4 and remains selected**. Premium is neither simulated nor selectable. Any future bank switch must be backend-confirmed, only one bank may be active, and active sessions must not switch bank midway.
+- Internal worker-IPC backward-compatible *diagnostics-only* metadata (`hide_relay_endpoint_in_log` and a verified-session relay label). The worker accepts legacy 15-/16-field CONNECT commands and new 18-field commands. No game packet routing, relay protocol or session entitlement semantics changed.
+- Source regression tests for the new UI, session-state reset, privacy policy, and older worker IPC acceptance; r4 runtime UI simulation covers topbar actions, Time Bank and Connecting recovery.
+
+### Fixed
+- **Topbar interaction:** remove the r3 CSS that disabled and greyed out the entire Account/Settings/Theme group while connected. Keep **only** the Services/Connect mode dropdown disabled during Connecting, Connected and Disconnecting; Account, Settings, Theme and Time Bank remain clickable. Opening one topbar menu closes the other; clicking outside or pressing Escape dismisses menus.
+- **Log privacy:** trusted GLO Services relay-selection (`VERIFY000`) and DNS-resolution (`NET002`) entries write the safely normalized server name (or `GLO-Relay` fallback) **instead of relay IP:port**, including failure cases. Custom/third-party Connect retains the full endpoint for diagnostics. Redaction changes only human-readable logs, never the actual relay socket address; because OSS clients need that address to connect, this is **not** IP secrecy or access control.
+- **Stuck Connecting card:** each game button's caption is reconciled on every render after translation, instead of permanently overriding text after a single Connect action. A native disconnected/idle snapshot with no pending worker or prepare activity clears the UI's pending label even when Connecting failed before a worker was observed. No client-side fake disconnection timeout was added.
+- **Window layout:** remove the oversized Services wallet panel, move the game section upward, reduce its spacing, and set the default/minimum client-area height target from 720 to 700 logical pixels. The existing small-monitor work-area cap and responsive scrolling on genuinely smaller screens remain in place.
+
+### Preserved boundaries
+- Unmodified Wintun routing, packet forwarding, GLO relay wire protocol, ART/UMTP transparency, Production service, native splash behavior, safe logout and Win32 WebView2 System Tray lifecycle. The only internal worker IPC extension is optional presentation metadata, not a change to relay/game network traffic.
+
+### Validation and limitations
+- Source/contract tests plus Node.js UI simulations and ZIP CRC validation are run in this environment. **Windows EXE/NSIS compilation, real DPI/scrollbar rendering and on-device connection tests remain unverified** without the Windows WebView2 toolchain. See `RELEASE_VALIDATION_0.1.3-r4-beta.md`.
+
+## [0.1.3-r3-beta] - 2026-10-27
+
+### Added
+- **Transactional safe sign-out:** the native Win32 host now accepts `auth.logout` as a coordinated operation, cancels any unfinished URI inspection/handoff, discards in-flight Official `prepared` results and stops an active network-worker session **before** calling the Official API logout routine. A dedicated progress overlay prevents conflicting UI operations while this transaction is running.
+- The Account sign-out confirmation now warns explicitly that an active or connecting GLO session will be disconnected. Cancel leaves the session intact. Native disconnect confirmation is authoritative; if disconnection cannot be confirmed, sign-out is aborted without clearing saved credentials.
+- Sign-out progress and completion diagnostics (`AUTH030`–`AUTH034`); late pending preparation responses and stale auth/catalog/wallet UI callbacks are suppressed while logout is pending. An explicit final `reason=logout` acknowledgment identifies the actual completion, rather than treating unrelated `logged:false` responses as success.
+- **Desktop input context menu:** themed Copy, Cut, Paste and Select All menu for GLO text input / textarea only, with keyboard shortcuts displayed. Copy, Cut and Paste have native Windows clipboard bridge actions; Cut only removes selected text after a successful native clipboard write acknowledgment. Disabled/read-only inputs are respected.
+- Native startup timing markers (`PERF001`–`PERF004`) for the Win32 window, WebView2 startup request, JavaScript bridge readiness and first frontend-ready signal. The markers enable on-device profiling without exposing token/URI data.
+- Additional source and Node.js UI regression tests covering active-session mode lock, account visibility, safe logout, asynchronous event ordering and desktop edit policy.
+
+### Fixed
+- **Native splash flicker:** Win32 splash now draws to a compatible offscreen bitmap and commits atomically via `BitBlt`, eliminating visible intermediate erase/logo/text frames. The loading animation is a continuously rotating, anti-aliased **solid arc** instead of twelve stepped dots.
+- Splash render cadence changed from the unrelated 250 ms status timer (~4 FPS) to a dedicated ~33 ms timer (~30 FPS) that stops after the WebView2 frontend is revealed. GDI+ high-quality image interpolation and pixel offsets improve scaling from the bundled raster wordmark. The splash remains completely independent of WebView2.
+- **Connected topbar:** Services/Connect mode is now a noninteractive, static-looking label with its chevron hidden throughout Connecting, Connected, Disconnecting and Logout. The Account button remains accessible to authenticated users who may need to sign out.
+- **Unauthenticated topbar:** hide Account while logged out or verifying authentication; leave Settings and Dark/Light controls visible.
+- **Mixed sign-in/dashboard screen:** never show the sign-in form while the native session is active; clear stale UI metadata on successful sign-out and ignore old positive auth events during logout.
+- Prevent native Custom Connect confirmation from starting during a pending logout, including if a delayed UI callback arrives after the user has requested sign-out.
+- Remove browser-like selection/copy/drag of application labels and artwork outside editable fields while preserving keyboard focus, navigation and native editing/IME inside fields.
+
+### Performance
+- Remove the extra fixed 80 ms readiness delay after initial UI render; schedule frontend-ready notification at the next event-loop turn, **after** `render()` completes. WebView2 still remains hidden until the native host receives readiness.
+- Emit the authenticated UI state as soon as `/app/me` verifies the account, without waiting for `/app/booster/catalog` to complete; the catalog continues loading separately. The backend API and existing account/token format are unchanged.
+- Reduce redundant WebView2 DOM work during 1-second snapshots: translate static labels only on language change, update status text only when its value changes, skip unchanged catalog/region layouts and avoid reassigning identical artwork sources.
+- Performance changes are intended to improve perceived readiness and frontend CPU overhead, **not** to promise a specific RAM or launch-time reduction. Actual Windows WebView2 process totals require measurement.
+
+### Compatibility, security and explicit exclusions
+- Preserve `VERSION=0.1.3` and all packet/wire/relay/Wintun behavior; only release/display strings advance to `0.1.3-r3-beta`.
+- **No change whatsoever to `minimize_to_tray()` or WebView2 release/recreate policy on tray**, including existing Optimize Memory settings.
+- Keep ART/UMTP, route selection and Production orchestration entirely outside OSS client/ordinary relay.
+- Native clipboard contents are transferred only for a user-triggered edit action on the local WebView2, capped at 8192 bytes, and never written to logs; no provider URI/session grant/private key is intentionally logged.
+- No original vector wordmark is bundled in the r2 archive. The r3 splash uses the original PNG with improved filtering; **this is not true SVG/vector rendering**. A genuine logo SVG would be needed for resolution-independent edges.
+
+### Validation / release status
+- Python/Node source and simulated UI tests are recorded in `RELEASE_VALIDATION_0.1.3-r3-beta.md`.
+- **Windows EXE build, WebView2 runtime, high-DPI rendering, on-device clipboard behavior, cold-start benchmark and a live session/logout test have not been verified on this Linux host.** Windows GitHub Actions and real-device smoke tests are required before calling this a validated binary release.
+
+## [0.1.3-r2-beta] - 2026-10-27
+
+### Added
+- **Native Win32 splash screen:** dark GLO-branded startup/restoration screen with the bundled long PNG wordmark, an animated native GDI+ activity indicator and status text. It is painted by the Windows host before WebView2 starts; it does **not** depend on HTML, the WebView2 renderer, network requests, or authentication.
+- A WebView2 UI-ready handshake: the controller starts hidden and is revealed after the local frontend initializes its DOM and notifies the native host. The existing local `ui/assets/wordmark-light.png` is reused, with a native text fallback if the image cannot be loaded.
+- A 30-second native first-frame watchdog with Retry/Cancel messaging rather than an indefinitely blank application window. Optional tray memory optimization continues to dispose of and recreate only WebView2, not the live network connection.
+- Shared Connecting progress UI for Official Services and Custom Connect URI inspection/confirmation; new inspection, relay-probe and handoff-redeem stages (driven by existing native handoff worker state, not invented percentages). VI/EN strings for new stages.
+- Additional sanitized `UI001`–`UI004`, `CONNECT001`, `CONNECT012`–`CONNECT014`, `URI021`–`URI022`, and `API021` lifecycle/diagnostic events; API preparation failures now carry allowlisted error codes, the HTTP status and local WinHTTP error number where available.
+- New source-level and Node.js VM regression tests for startup, connection state, native-to-UI transitions, dashboard game identity, TFT Custom Connect, and locked navigation.
+
+### Fixed
+- The first visible window no longer displays WebView2's pre-navigation white surface: the native splash stays visible while the WebView2 controller is hidden.
+- Custom Connect progress is no longer inside the Services-only `#service-picker`. The shared progress panel works on both pages, including URI inspection and paste.
+- Prevent switching Services/Connect, opening the mode dropdown, or interacting with topbar actions during connecting or disconnecting; the mode label remains visible without its chevron. Native operation remains authoritative.
+- Hide the entire topbar on Settings while retaining the local Back button and moving the Settings title toward the top.
+- Remove the fallback to the previously selected VALORANT game from native **session snapshots**. The selection is kept separately for Services convenience and is not an indication of a live session.
+- Remove the VALORANT placeholder from the disconnected dashboard HTML and JavaScript. Render current-game artwork only from confirmed active connection metadata; use the neutral placeholder for unknown/custom games, including `tft`, which has the display name Teamfight Tactics.
+- Clear stale active-game presentation on disconnect; avoid using the previously selected Services region for Custom Connect sessions.
+- Remove the JavaScript-only 60-second Services timeout that unlocked controls while native API/handoff/network workers could still be running. State transitions are tied to native snapshots, authoritative errors and handoff completion instead.
+- Return localized VI/EN, actionable, non-sensitive API failure categories such as `NETWORK_TIMEOUT`, `AUTH_REQUIRED`, `RATE_LIMITED`, `SERVICE_MAINTENANCE`, `PROFILE_UNAVAILABLE` and `HANDOFF_CANDIDATES_UNAVAILABLE`. Preserve the insufficient-time flow for `BALANCE_EMPTY`.
+- Record a safe handoff failure category in the native log **before** notifying the UI; do not forward untrusted/raw provider errors that may contain secrets.
+
+### Changed
+- Keep `VERSION=0.1.3` (wire/compatibility version); bump both `DISPLAY_VERSION` and `RELEASE` to `0.1.3-r2-beta` and update the footer and official app HTTP user agent.
+- Keep the r1 official/custom session handoff and network-worker IPC unchanged. The progress UI represents existing native stages; no new provider API methods, session fields on the wire, game routing rules, Wintun hooks or ordinary relay behaviors are introduced.
+- Preserve archived changelog entries for historical beta revisions. Update release-version assertions in repository tests and document the new UI behavioral contracts.
+
+### Security and OSS boundary
+- GLO OSS knows only client-visible game/session/network-worker state and public service errors. No ART/UMTP, proprietary route selection, provider secrets or Production-only code is added.
+- No raw token, private key, Authorization header, full provider URI or remote response body should appear in new logs. API error strings are local, fixed messages; only safe identifiers and numeric statuses are emitted.
+- The existing Wintun/TUN gameplay-UDP routing, security/admission policy, relay protocol and Production `v0.2.6-r10-beta` remain untouched.
+
+### Validation and known limitations
+- Source checks: `node --check app/frontend/ui/app.js`, Node.js UI simulation, release/build-policy tests and complete Python test suite (results recorded separately in `RELEASE_VALIDATION_0.1.3-r2-beta.md`).
+- **No Windows EXE/installer built or live Valorant/Roblox/TFT gameplay tested here.** A native MinGW/Windows CI build and a Windows WebView2/tray smoke test remain mandatory before publishing a verified binary release. Linux host also lacks libsodium development dependencies for a local CMake build.
+- The splash image depends on the existing copied `ui/assets/wordmark-light.png` being present alongside the built application. Text fallback is provided if packaging omits it.
 
 ## [0.1.3-r1-beta] - 2026-10-22
 
